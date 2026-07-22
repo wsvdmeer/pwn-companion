@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -336,7 +337,7 @@ private fun PixelBasemap(points: List<CaptureEntry>, current: GpsData?, modifier
                 BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(300.dp)
+                        .aspectRatio(1f)   // square map — matches the square tile composite
                 ) {
                     val wPx = constraints.maxWidth.toFloat()
                     val hPx = constraints.maxHeight.toFloat()

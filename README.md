@@ -169,7 +169,7 @@ Beyond reacting, the pet speaks up on its own for real events — all throttled/
 
 ### One blended, mood-driven voice
 
-There's no voice picker. The companion speaks in a **single hacker-gremlin persona** that draws on **ten cult-film worlds** — Evil Dead, Star Wars, Matrix/Mr Robot, Harry Potter, Terminator, Tron, Jurassic Park, Alien, RoboCop, Blade Runner — but commits to **exactly one franchise per line** (a world is pinned per utterance, never blended mid-sentence, so you get "Hail to the king, baby." *or* "I find your lack of security disturbing." — never a jarring mash of both).
+There's no voice picker. The companion speaks in a **single hacker-gremlin persona** that draws on **21 cult-film & game worlds** — Evil Dead, Star Wars, Matrix/Mr Robot, Harry Potter, Terminator, Tron, Jurassic Park, Alien, RoboCop, Blade Runner, WarGames, Hackers, Portal/GLaDOS, Predator, HAL 9000, Cyberpunk 2077, SHODAN, Mad Max, Ghostbusters, Back to the Future, The Thing — but commits to **exactly one franchise per line** (a world is pinned per utterance, never blended mid-sentence, so you get "Hail to the king, baby." *or* "I find your lack of security disturbing." — never a jarring mash of both). The film-world the pet is currently in is shown as a caption under the mirrored e-ink (`‹ jurassic park ›`).
 
 What changes is the **tone**, chosen live by the emergent disposition (no user input):
 
@@ -196,7 +196,7 @@ The advisor's ranking is also sent back to the device (`set_channel_priority` �
 
 Channel choice is an **explore/exploit bandit** (UCB1): it exploits the productive channels but keeps sampling under-explored ones (including the whole 2.4GHz floor) so it never tunnel-visions on a self-reinforcing top-N. The exploration counts **decay over time** — the recency term — so a channel that goes cold gets re-explored (WiFi is non-stationary).
 
-It's also **motion-aware**: pinning a learned set only helps while stationary, so when the phone's **GPS speed** (or AP churn, as a fallback) says you're *moving*, it stops pinning and hops the wide 2.4GHz band (1/6/11) to keep discovering as the environment changes. Motion also drives **dwell steering** — the app sets the device's `recon_time` longer when you're still (sit and wait out handshakes on the good channels) and shorter when moving (cover ground, hop faster). It's a soft, reversible nudge with idle back-off (an unchanged set isn't re-sent every 45s). The live `[ steering ]` section shows the active `recon → ch …`; the aggregate learning readout lives behind the `[ history ]` link.
+It's also **motion-aware**: pinning a learned set only helps while stationary, so when you're *moving* it stops pinning and hops the wide 2.4GHz band (1/6/11) to keep discovering as the environment changes. Motion is read from the phone's **hardware GPS speed** (Doppler) when available — falling back to an accuracy-gated position difference, then to AP-churn indoors — all with hysteresis, so GPS jitter or a stationary scan can't false-trip "moving" (and send it hopping too fast). Motion also drives **dwell steering** — the app sets the device's `recon_time` longer when you're still (sit and wait out handshakes on the good channels) and shorter when moving (cover ground, hop faster). It's a soft, reversible nudge with idle back-off (an unchanged set isn't re-sent every 45s). The live `[ steering ]` section shows the active `recon → ch …`; the aggregate learning readout lives behind the `[ history ]` link.
 
 ### The bandit protocol, step by step
 
@@ -219,7 +219,7 @@ Final score = `exploit(ch) / maxExploit + bonus`. The 3 chosen channels get thei
 
 ### How the voice works — fully on-device, no model
 
-There is **no language model**. The voice is a **curated per-franchise corpus** (ten cult-film worlds × eight reaction categories) selected deterministically by the emergent mood + a persistent franchise, with live-data slots (`[SESSION]`/`[CRACKED]`/`[BESTCH]`/…) filled in from real capture stats. It's instant, offline, weighs nothing, and can never invent a wrong channel or number or drift off-character.
+There is **no language model**. The voice is a **curated per-franchise corpus** (21 cult-film/game worlds × eight reaction categories) selected deterministically by the emergent mood + a persistent franchise, with live-data slots (`[SESSION]`/`[CRACKED]`/`[BESTCH]`/…) filled in from real capture stats. It's instant, offline, weighs nothing, and can never invent a wrong channel or number or drift off-character.
 
 > **Earlier versions shipped a ~491 MB on-device LLM** (Qwen2.5-0.5B via llama.cpp) whose only job was phrasing live data. Once the personality moved into the curated corpus, that job shrank to filling in a few numbers — so the model (and its download, RAM/battery cost, native build, and refusal-handling) was **removed entirely** in favor of deterministic slot templates. Same voice, none of the weight.
 
@@ -312,7 +312,7 @@ Separately, an **Alerts** channel (normal importance) fires event notifications:
 
 ## Look & feel
 
-Fixed dark phosphor-terminal theme (no white launch flash): a terminal app **icon** (green `^_^` face on a CRT-grid background), a matching dark **splash**, the bundled Share Tech Mono font everywhere, and uppercase `[ SECTION ]` headers.
+Fixed dark phosphor-terminal theme (no white launch flash): a terminal app **icon** (the pwnagotchi "smart" `(✜‿‿✜)` face in phosphor green on a CRT-grid background), a matching dark **splash**, the bundled Share Tech Mono font everywhere, and uppercase `[ SECTION ]` headers. When no pwnagotchi is linked the console shows a `[ standby ]` panel (idle face + a rotating in-character line) instead of empty sections.
 
 ---
 
@@ -372,6 +372,6 @@ Built on / credits: [Pwnagotchi (jayofelony fork)](https://github.com/jayofelony
 
 ### Trademarks & parody
 
-The pet's voice riffs on cult films (Evil Dead, Star Wars, The Matrix, Harry Potter, Terminator, Tron, Jurassic Park, Alien, RoboCop, Blade Runner). PwnCompanion is an **unofficial, non-commercial parody/homage** — it is **not affiliated with, endorsed by, or sponsored by** any of those rights holders. All film titles, characters, and quoted phrases are the trademarks and copyrights of their respective owners, referenced here for parody and commentary only.
+The pet's voice riffs on cult films and games (Evil Dead, Star Wars, The Matrix / Mr. Robot, Harry Potter, Terminator, Tron, Jurassic Park, Alien, RoboCop, Blade Runner, WarGames, Hackers, Portal, Predator, 2001: A Space Odyssey, Cyberpunk 2077, System Shock, Mad Max, Ghostbusters, Back to the Future, The Thing). PwnCompanion is an **unofficial, non-commercial parody/homage** — it is **not affiliated with, endorsed by, or sponsored by** any of those rights holders. All titles, characters, and quoted phrases are the trademarks and copyrights of their respective owners, referenced here for parody and commentary only.
 
 > Reminder: authorized / educational use only — see the responsible-use note at the top.

@@ -197,17 +197,11 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        // Don't start the foreground service (and its persistent notification) on launch
-        // when there's no BT tether — nothing can connect over BT-PAN without bnep0
-        // anyway, so an always-on "listening" notice with no link is just noise. The
-        // manifest BluetoothConnectionReceiver starts us the moment the device tethers,
-        // and the [ start service ] button still forces a start on demand.
-        if (!com.wsvdmeer.pwncompanion.utils.BluetoothHelper.hasBluetoothTether()) {
-            Log.i(tag, "No BT tether at launch — deferring service start to the BT receiver")
-            viewModel.setServerRunning(false)
-            return
-        }
-
+        // Start the companion (foreground) service as soon as the app launches, so the
+        // WebSocket server is up and listening immediately — it discovers/accepts the
+        // pwnagotchi the moment the BT tether appears, rather than waiting for the BT
+        // receiver to start us. (The manifest BluetoothConnectionReceiver still starts us
+        // if the app isn't open when the device tethers.)
         try {
             val serviceIntent = Intent(this, CompanionBackgroundService::class.java).apply {
                 action = CompanionBackgroundService.ACTION_START_NETWORKING

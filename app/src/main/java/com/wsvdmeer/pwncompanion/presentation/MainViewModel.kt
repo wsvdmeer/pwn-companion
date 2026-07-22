@@ -199,17 +199,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun onGpsFix(gps: GpsData) {
         val now = System.currentTimeMillis()
         _lastGpsAtMs = now
-        val prev = _prevGps; val prevAt = _prevGpsAtMs
-        if (prev != null && prev.isValid() && gps.isValid() && prevAt > 0L) {
-            val dt = (now - prevAt) / 1000.0
-            if (dt >= 1.0) {
-                val speedMps = haversineMeters(prev.latitude, prev.longitude, gps.latitude, gps.longitude) / dt
-                _isMoving.value = when {
-                    speedMps > 1.4 -> true    // ~5 km/h+ → walking or faster
-                    speedMps < 0.6 -> false   // basically stationary
-                    else -> _isMoving.value   // hysteresis band → keep current
-                }
-            }
+        val mh = com.wsvdmeer.pwncompanion.services.MotionHeuristic
+
+        // Prefer the OS-reported hardware speed (Doppler on most chipsets — far less noisy than
+        // differencing positions). Fall back to an accuracy-gated position difference only when
+        // no hardware speed is available, so stationary GPS jitter can't read as motion.
+        val hw = gps.speed
+        val speedMps: Double? = if (hw != null && hw >= 0f && gps.isValid()) {
+            hw.toDouble()
+        } else {
+            val prev = _prevGps; val prevAt = _prevGpsAtMs
+            if (prev != null && prev.isValid() && gps.isValid() && prevAt > 0L) {
+                val meters = haversineMeters(prev.latitude, prev.longitude, gps.latitude, gps.longitude)
+                mh.speedFromDisplacement(meters, (now - prevAt) / 1000.0, maxOf(prev.accuracy, gps.accuracy))
+            } else null
+        }
+        if (speedMps != null) {
+            _isMoving.value = mh.decideBySpeed(speedMps, _isMoving.value)
         }
         _prevGps = gps; _prevGpsAtMs = now
     }
@@ -218,9 +224,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun isMovingNow(): Boolean {
         val now = System.currentTimeMillis()
         val gpsFresh = (now - _lastGpsAtMs) < 30_000 && _gpsData.value?.isValid() == true
-        if (gpsFresh) return _isMoving.value
-        val cutoff = now - 60_000
-        return _newApTimes.count { it >= cutoff } >= 3   // ≥3 new APs/min ≈ moving
+        if (gpsFresh) {
+            Log.d("Motion", "gps-fresh → moving=${_isMoving.value} (speed path)")
+            return _isMoving.value   // GPS speed path is already hysteresis'd
+        }
+
+        // GPS unavailable (indoors, cold start): fall back to AP-churn — but CONSERVATIVELY.
+        // A stationary pwnagotchi still steadily discovers new BSSIDs as bettercap scans, so a
+        // low threshold false-trips "moving" and drops us into fast-hop 1/6/11 mode (the "hops
+        // too fast" bug). The hysteresis lives in MotionHeuristic (pure + unit-tested).
+        val churn = _newApTimes.count { it >= now - 60_000 }
+        _isMoving.value = com.wsvdmeer.pwncompanion.services.MotionHeuristic
+            .decideByChurn(churn, _isMoving.value)
+        Log.d("Motion", "no-gps churn=$churn/min → moving=${_isMoving.value} (enter≥${com.wsvdmeer.pwncompanion.services.MotionHeuristic.ENTER} exit≤${com.wsvdmeer.pwncompanion.services.MotionHeuristic.EXIT})")
+        return _isMoving.value
     }
 
     private fun haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {

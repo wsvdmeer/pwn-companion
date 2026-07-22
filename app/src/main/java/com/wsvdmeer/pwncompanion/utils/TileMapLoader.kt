@@ -81,6 +81,24 @@ object TileMapLoader {
             val lonM = ((maxLon - minLon) * 0.2).coerceAtLeast(0.0008)
             minLat -= latM; maxLat += latM; minLon -= lonM; maxLon += lonM
 
+            // Square the bounding box in Web-Mercator space so the composite is ~square:
+            // an elongated capture spread (e.g. along a road) would otherwise centre the
+            // content in a wide/short bitmap and letterbox with black in the square map view.
+            run {
+                fun y01(lat: Double) = (1.0 - ln(tan(Math.toRadians(lat)) + 1.0 / cos(Math.toRadians(lat))) / PI) / 2.0
+                val wx = (maxLon - minLon) / 360.0
+                val wy = y01(minLat) - y01(maxLat)
+                if (wx > wy && wy > 0) {
+                    val cLat = (minLat + maxLat) / 2.0
+                    val half = (maxLat - minLat) / 2.0 * (wx / wy)
+                    minLat = cLat - half; maxLat = cLat + half
+                } else if (wy > wx && wx > 0) {
+                    val cLon = (minLon + maxLon) / 2.0
+                    val half = (maxLon - minLon) / 2.0 * (wy / wx)
+                    minLon = cLon - half; maxLon = cLon + half
+                }
+            }
+
             // Pick the most-detailed zoom whose tile span fits the small grid.
             var zoom = 3
             for (z in 19 downTo 3) {
@@ -93,26 +111,30 @@ object TileMapLoader {
             val x1 = floor(tileX(maxLon, zoom)).toInt()
             val y0 = floor(tileY(maxLat, zoom)).toInt()
             val y1 = floor(tileY(minLat, zoom)).toInt()
-            val spanX = (x1 - x0 + 1).coerceIn(1, MAX_TILES_PER_AXIS)
-            val spanY = (y1 - y0 + 1).coerceIn(1, MAX_TILES_PER_AXIS)
+            // Force a SQUARE tile window (max axis, centred). Integer tile boundaries can still
+            // leave spanX≠spanY after squaring the box, and a non-square composite letterboxes
+            // in the square map — so pad the short axis with real neighbouring tiles instead.
+            val span = maxOf(x1 - x0 + 1, y1 - y0 + 1).coerceIn(1, MAX_TILES_PER_AXIS)
+            val bx0 = x0 - (span - (x1 - x0 + 1)) / 2
+            val by0 = y0 - (span - (y1 - y0 + 1)) / 2
 
-            val composite = Bitmap.createBitmap(spanX * TILE, spanY * TILE, Bitmap.Config.ARGB_8888)
+            val composite = Bitmap.createBitmap(span * TILE, span * TILE, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(composite)
             var anyTile = false
-            for (tx in x0 until x0 + spanX) {
-                for (ty in y0 until y0 + spanY) {
+            for (tx in bx0 until bx0 + span) {
+                for (ty in by0 until by0 + span) {
                     val tile = fetchTile(context, zoom, tx, ty) ?: continue
-                    canvas.drawBitmap(tile, ((tx - x0) * TILE).toFloat(), ((ty - y0) * TILE).toFloat(), null)
+                    canvas.drawBitmap(tile, ((tx - bx0) * TILE).toFloat(), ((ty - by0) * TILE).toFloat(), null)
                     tile.recycle()
                     anyTile = true
                 }
             }
             if (!anyTile) {
-                Log.w(TAG, "no tiles loaded (z=$zoom span=${spanX}x${spanY}) — falling back")
+                Log.w(TAG, "no tiles loaded (z=$zoom span=${span}x${span}) — falling back")
                 return@withContext null
             }
-            Log.i(TAG, "map composited z=$zoom span=${spanX}x${spanY}")
-            MapTiles(composite, zoom, x0 * TILE.toDouble(), y0 * TILE.toDouble())
+            Log.i(TAG, "map composited z=$zoom span=${span}x${span}")
+            MapTiles(composite, zoom, bx0 * TILE.toDouble(), by0 * TILE.toDouble())
         } catch (e: Exception) {
             Log.w(TAG, "tile load failed: ${e.message}")
             null

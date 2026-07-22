@@ -213,6 +213,12 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
     // e-ink voice pool, so its identity is unified across screens (and never blends two).
     @Volatile private var _currentFranchise: Franchise = BlendedVoice.franchises.random()
     @Volatile private var _franchisePinnedFor: String? = null
+
+    /** The pinned film-world's label, surfaced so the console can show which world the pet
+     *  is currently voicing (updated whenever the disposition flip rotates the franchise). */
+    private val _franchiseLabel = MutableStateFlow(_currentFranchise.label)
+    val franchiseLabel = _franchiseLabel.asStateFlow()
+
     private fun currentFranchise(): Franchise {
         val disp = personality.value.disposition
         if (disp != _franchisePinnedFor) {
@@ -221,6 +227,7 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
             if (f == _currentFranchise && opts.size > 1) f = opts[(opts.indexOf(f) + 1) % opts.size]
             _currentFranchise = f
             _franchisePinnedFor = disp
+            _franchiseLabel.value = f.label
         }
         return _currentFranchise
     }

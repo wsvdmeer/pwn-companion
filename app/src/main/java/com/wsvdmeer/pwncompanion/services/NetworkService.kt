@@ -64,6 +64,7 @@ class NetworkService(private val context: Context) {
                 longitude = lon,
                 accuracy = data.accuracy ?: 0.0,
                 altitude = data.altitude ?: 0.0,
+                speed = data.speed,
                 timestamp = data.timestamp ?: System.currentTimeMillis(),
             )
         }

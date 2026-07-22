@@ -4,6 +4,34 @@ All significant changes to PwnCompanion, most recent first.
 
 ---
 
+## Session — 2026-07-22 (UI polish · motion · franchises)
+
+### Console UI
+| Area | Detail |
+|------|--------|
+| `[ standby ]` | When no pwnagotchi is linked, a "waiting" panel (idle face + rotating in-character line) instead of empty sections |
+| `[ gps ]` | Only while linked (not on standby); always rendered when connected, showing `acquiring…` until a fix — never vanishes mid-session |
+| `[ history ]` | Top-3 channels shown inline as vitals-style bar gauges (bar = activity, value = yield %) |
+| `[ captures ]` | Decluttered from 4 stat rows to 2 (counts folded into `total`; crack result + wpa-sec state folded into `crack`, shown only when relevant) |
+| `[ log ]` | Main console ellipsizes; log detail wraps full lines (no more mid-line clip) |
+| Franchise caption | The current film-world is captioned under the mirrored e-ink (`‹ world ›`) |
+| Icon | Launcher icon → the pwnagotchi "smart" `(✜‿‿✜)` face, phosphor green on the CRT grid |
+| Service on launch | Foreground/WebSocket service now starts in `onCreate` (no longer deferred to the BT receiver) |
+
+### Voice — 21 franchises
+| Area | Detail |
+|------|--------|
+| +7 worlds | Added HAL 9000, Cyberpunk 2077, SHODAN, Mad Max, Ghostbusters, Back to the Future, The Thing (full 8-category corpus each) → 21 total |
+
+### Steering — motion & the bandit, extracted + tested
+| Area | Detail |
+|------|--------|
+| Motion (hardware speed) | Motion now reads the OS `Location.speed` (Doppler) when present, plumbed GpsService→ScreenData→GpsData; falls back to an **accuracy-gated** position difference, then AP-churn indoors — all hysteresis'd, so GPS jitter / a stationary scan can't false-trip "moving" (the "hops too fast" fix) |
+| Pure cores | Extracted `ChannelBandit` (UCB1) + `MotionHeuristic` into a dependency-free `BanditCore.kt`; SyncScheduler/MainViewModel delegate (identical math) |
+| Unit tests | `BanditCoreTest` — 11 tests (bandit exploit/explore/decay + motion churn/speed/accuracy-gate). Verified live in AUTO too (steering stays stationary, explores the tail) |
+
+---
+
 ## Session — 2026-07-22
 
 ### Removed the on-device LLM — voice is now fully deterministic
