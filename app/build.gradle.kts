@@ -20,11 +20,7 @@ android {
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-
-        // Ship arm64-v8a only (real devices) — the native llama.cpp libs are large
-        ndk {
-            abiFilters += "arm64-v8a"
-        }
+        // No native code any more (llama.cpp removed) — pure JVM, runs on all ABIs.
     }
 
     buildTypes {
@@ -46,20 +42,6 @@ android {
     }
     lint {
         disable.add("ForegroundServiceType")
-    }
-
-    // llama.cpp JNI — builds libllama-jni.so from C++ source via CMake
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1+"
-        }
-    }
-
-    // GGUF files are already compressed — disable aapt re-compression so
-    // Android can mmap them from the APK directly if needed.
-    androidResources {
-        noCompress += "gguf"
     }
 }
 
@@ -101,14 +83,6 @@ dependencies {
     // Data Storage (DataStore - replaces Room, no annotation processing)
     implementation("androidx.datastore:datastore-preferences:1.0.0")
 
-    // HTTP client for model download with progress tracking (kept for future use)
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-
-    // On-device LLM inference — llama.cpp via JNI (see app/src/main/cpp/)
-    // Supports standard GGUF files (Qwen2, LLaMA, Mistral, etc.)
-    // Note: native .so is built by CMake/NDK, not a Gradle dependency.
-
-    // ...existing code...
     implementation(libs.androidx.notification)
 
     // Testing

@@ -204,27 +204,17 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
     private val _wordCount = MutableStateFlow(0)
     val wordCount = _wordCount.asStateFlow()
 
-    // Human-friendly model name for display in UI
-    val modelName: String
-        get() = if (llamaClient.isGgufLoaded()) "Qwen2.5 0.5B" else "Built-in AI"
+    // Voice is fully on-device + deterministic now (no model download).
+    val modelName: String get() = "on-device"
 
     // If an event arrives while generation is in progress, store it here and
     // process it immediately after the current generation finishes.
     private var pendingEvent: WifiEvent? = null
 
-    /**
-     * True when the Qwen2 GGUF model is on disk.
-     * Built-in engine is always active as fallback — no file needed.
-     */
-    val isModelInstalled: Boolean
-        get() = llamaClient.modelManager.isModelAvailable()
+    // No model to install/load any more — the deterministic engine is always ready.
+    val isModelInstalled: Boolean get() = true
 
-
-    /**
-     * True once the model is fully loaded in memory and ready for inference.
-     * Starts false; set to true after the background init coroutine completes.
-     */
-    private val _isModelReady = MutableStateFlow(false)
+    private val _isModelReady = MutableStateFlow(true)
     val isModelReady = _isModelReady.asStateFlow()
 
     private val _statusMessage = MutableStateFlow("Initializing...")
@@ -252,16 +242,92 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
     /** Blended "thinking…" status phrases shown while the model works. */
     private fun workingPhrase(): String = BlendedVoice.thinking.random()
 
-    // One cult-movie world per line: pick a franchise (avoiding an immediate repeat)
-    // and return the directive injected into the prompt, so the model commits to a
-    // single franchise instead of blending two (e.g. Evil Dead + Star Wars) in one line.
-    @Volatile private var _lastFranchise: Franchise? = null
-    private fun pickFranchiseDirective(): String {
-        val opts = BlendedVoice.franchises
-        var f = opts.random()
-        if (f == _lastFranchise && opts.size > 1) f = opts[(opts.indexOf(f) + 1) % opts.size]
-        _lastFranchise = f
-        return "Voice this line PURELY in the ${f.label} style (${f.cue}) Do NOT mix in any other franchise."
+    // ── Franchise identity (persistent, not per-line roulette) ─────────────────
+    // ONE film world is pinned at a time; it holds for a mood "stretch" and rotates only
+    // when the emergent disposition flips — so the pet reads as a character IN a mood, not
+    // a random costume each line. The SAME current franchise drives the app card AND the
+    // e-ink voice pool, so its identity is unified across screens (and never blends two).
+    @Volatile private var _currentFranchise: Franchise = BlendedVoice.franchises.random()
+    @Volatile private var _franchisePinnedFor: String? = null
+    private fun currentFranchise(): Franchise {
+        val disp = personality.value.disposition
+        if (disp != _franchisePinnedFor) {
+            val opts = BlendedVoice.franchises
+            var f = opts.random()
+            if (f == _currentFranchise && opts.size > 1) f = opts[(opts.indexOf(f) + 1) % opts.size]
+            _currentFranchise = f
+            _franchisePinnedFor = disp
+        }
+        return _currentFranchise
+    }
+    private fun franchiseDirective(f: Franchise): String =
+        "Voice this line PURELY in the ${f.label} style (${f.cue}) Do NOT mix in any other franchise."
+
+    /** Fill curated-line slots with live data (this is the "AI phrasing live data" job, done
+     *  deterministically now that the LLM is gone). */
+    private fun fillSlots(line: String, network: String? = null): String {
+        val caps = _totalCaptures.value
+        val session = _sessionStartCaptures?.let { (caps - it).coerceAtLeast(0) } ?: caps
+        val bestCh = _learningStats.value?.bestChannel?.toString() ?: "?"
+        // Nullable read: fillSlots runs during init (pool reseed) before _captureStats is set.
+        val stats: List<String>? = _captureStats
+        val cracked = stats?.firstNotNullOfOrNull {
+            Regex("cracked\\D*(\\d+)", RegexOption.IGNORE_CASE).find(it)?.groupValues?.get(1)
+        } ?: "0"
+        val temp = _latestTelemetry?.temperature?.toInt()?.toString() ?: "?"
+        val since = _lastCaptureTime.value?.let {
+            val m = (System.currentTimeMillis() - it) / 60_000
+            when { m < 1 -> "just now"; m < 60 -> "${m}m ago"; else -> "${m / 60}h ago" }
+        } ?: "a while"
+        return line
+            .replace("[NETWORK]", network?.takeIf { it.isNotBlank() } ?: "that one")
+            .replace("[CAPTURES]", caps.toString())
+            .replace("[SESSION]", session.toString())
+            .replace("[BESTCH]", bestCh)
+            .replace("[CHANNEL]", bestCh)
+            .replace("[CRACKED]", cracked)
+            .replace("[TEMP]", temp)
+            .replace("[SINCE]", since)
+    }
+
+    /** A guaranteed-clean curated line for the current franchise + corpus category (slots filled). */
+    private fun curatedLine(category: String, network: String? = null): String =
+        fillSlots(BlendedVoice.linesFor(currentFranchise(), category).random(), network)
+
+    /** Map a WifiEvent to a corpus category (handshake/assoc/deauth/idle/excited/weary/normal). */
+    private fun corpusCategory(event: WifiEvent): String = when (event.type) {
+        "HANDSHAKE_CAPTURED", "CONNECTION_SUCCESS" -> "handshake"
+        "NETWORK_DISCOVERED"                        -> "assoc"
+        "ANOMALY_DETECTED"                          -> "deauth"
+        "IDLE"                                      -> "idle"
+        "TIER_UP", "MILESTONE", "AI_BEST"           -> "excited"
+        "AI_WORST"                                  -> "weary"
+        else                                        -> "normal"
+    }
+
+    /**
+     * Curated-first gate for an LLM line: usable only if it stays inside the pinned franchise
+     * (carries NO other franchise's signature keyword — i.e. no cross-world blend) and is
+     * coherent. On failure the caller substitutes a curated line.
+     */
+    private fun franchiseGuard(line: String, pinned: Franchise): Boolean {
+        val l = line.lowercase()
+        for (fr in BlendedVoice.franchises) {
+            if (fr == pinned) continue
+            if (fr.keywords.any { it.length >= 4 && l.contains(it) }) return false
+        }
+        return true
+    }
+
+    /** Lightweight coherence check for a generated line (complements cleanLine). */
+    private fun coherent(s: String): Boolean {
+        val t = s.trim()
+        if (t.length < 3) return false
+        if (t.count { it == '(' } != t.count { it == ')' }) return false
+        if (t.count { it == '"' } % 2 != 0) return false
+        val words = t.lowercase().split(Regex("\\s+"))
+        for (i in 1 until words.size) if (words[i] == words[i - 1] && words[i].length > 2) return false
+        return true
     }
 
     // Last handshake capture timestamp — used for memory summary
@@ -382,42 +448,38 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
     // almost all the time) so its pool turns over faster than the rare categories.
     private val VOICE_POOL_REFRESH_MS = 30_000L
 
+    /** Map an e-ink voice-pool category → a corpus category. */
+    private fun poolCorpusCat(poolKey: String): String = when (poolKey) {
+        "normal"                          -> "normal"
+        "bored", "lonely"                 -> "idle"
+        "sad", "demotivated"              -> "weary"
+        "angry", "deauth"                 -> "deauth"
+        "excited", "motivated", "grateful" -> "excited"
+        "handshakes"                      -> "handshake"
+        "assoc"                           -> "assoc"
+        "last_session"                    -> "recap"
+        else                              -> "normal"
+    }
+
     /**
-     * Curated seed lines so every category — crucially `normal`, which the device shows
-     * almost all the time during idle scanning (agent.py calls view.on_normal() each recon
-     * cycle) — always has a short, in-voice line. Without this the stock `on_normal()`
-     * returns '' / '...' and the bubble looks blank. Short (≤~40c), placeholder-free, one
-     * clause; LLM refreshes prepend on top and push these out over time (→ more variety).
+     * Curated-first e-ink pool: (re)fill every category from the CURRENT franchise's corpus,
+     * so the pwnagotchi's screen always has clean, in-character, single-franchise lines — and
+     * its identity shifts when the mood (and thus the franchise) flips. Real event reactions
+     * and (in manual) LLM recaps prepend on top for freshness.
      */
-    private val seedLines: Map<String, List<String>> = mapOf(
-        "normal"      to listOf("Prowling the spectrum, patient as death.", "Just me and the airwaves tonight.", "Hunting quietly. The wire never sleeps."),
-        "bored"       to listOf("Bored. Wake me when something bleeds.", "Nothing but static and silence."),
-        "sad"         to listOf("Another dead night on the wire.", "The spectrum's cold, and so am I."),
-        "angry"       to listOf("Someone's jamming my hunt. Bad move.", "The air's fighting back tonight."),
-        "excited"     to listOf("The hunt is ON. I'm unstoppable.", "So many targets, so little mercy."),
-        "grateful"    to listOf("Good hauls tonight. I'm grateful.", "The wire's been kind to me."),
-        "lonely"      to listOf("No units nearby. Just me in the dark.", "Alone on the frequency again."),
-        "handshakes"  to listOf("Another handshake, another trophy.", "Snatched it clean. Delicious.", "Its secret belongs to me now."),
-        "deauth"      to listOf("Kicked 'em off. No Wi-Fi for you.", "Consider yourself unplugged."),
-        "assoc"       to listOf("Sidling up to fresh prey.", "Knocking on a new door."),
-        "motivated"   to listOf("Fired up. Every network is mine.", "Lock and load. Time to hunt."),
-        "demotivated" to listOf("Can't be bothered. Hunt's dull.", "Low power, lower spirits."),
-        // Shown on the MANUAL-mode recap screen (replaces the stock kicked/handshakes tally).
-        "last_session" to listOf(
-            "Another night on the hunt, logged.",
-            "Tallying the night's trophies.",
-            "Session's paused. The kills stand.",
-            "Reviewing the damage I've done.",
-            "The wire remembers what I took.",
-        ),
-    )
+    @Volatile private var _poolFranchise: Franchise? = null
+    private fun reseedPoolFromCorpus() {
+        val f = currentFranchise()
+        _poolFranchise = f
+        _voicePool.value = poolCats.associate { pc ->
+            pc.key to BlendedVoice.linesFor(f, poolCorpusCat(pc.key)).map { fillSlots(it) }.distinct()
+        }
+    }
 
     init {
-        // Seed the voice pool so the device always has a line to speak (esp. `normal`,
-        // its dominant idle state) from the first push — LLM lines layer on for variety.
-        _voicePool.value = seedLines
-        // Built-in engine needs no model file — always initialize immediately.
-        loadModelInBackground()
+        // Curated-first: seed the whole pool from the current franchise's corpus so the
+        // device always has clean, in-character lines from the first push.
+        reseedPoolFromCorpus()
         // Restore the learned long-term personality baseline from disk so the
         // companion picks up the disposition it developed in previous sessions.
         viewModelScope.launch {
@@ -448,30 +510,24 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
                 }
             }
         }
-        // Voice-pool refresh loop — while a device is linked, generate one fresh line
-        // per category on rotation so the pet's on-screen voice keeps evolving even
-        // when idle. Skips when the model isn't ready or a user-facing generation is
-        // in flight (native inference is serialized anyway; this just keeps taps snappy).
+        // Voice-pool refresh loop (curated-first). While a device is linked: re-seed the
+        // whole pool from the corpus when the franchise shifts (mood flip), and — in MANUAL,
+        // where the device shows only the recap screen — build a few data-grounded LLM recaps
+        // (the one spot the LLM earns its keep on e-ink). Everything else is served by the
+        // curated corpus, so no per-category LLM quips (that's where the blends/clunkers were).
         viewModelScope.launch {
             while (true) {
                 delay(VOICE_POOL_REFRESH_MS)
-                if (!_deviceConnected || !_isModelReady.value || _isGenerating.value) continue
-                // In MANUAL the device only shows the recap screen, so spend cycles building
-                // varied recaps — until we have enough, then idle (don't burn the LLM). In
-                // AUTO, round-robin the normal categories (weighted toward `normal`).
-                val manual = !_isAutoMode.value
-                if (manual && (_voicePool.value["last_session"]?.size ?: 0) >= RECAP_LINES) continue
-                val cat = if (manual) lastSessionCat else poolRotation[(_poolIndex++) % poolRotation.size]
-                try {
-                    // The recap screen wants a short data-grounded blurb (2 sentences), with a
-                    // rotating focus so recaps differ; every other category is a tiny quip.
-                    val line = if (cat.key == "last_session")
-                        cleanRecap(llamaClient.generateQuick(buildRecapPrompt(nextRecapAngle()), maxTokens = 64))
-                    else
-                        cleanLine(llamaClient.generateQuick(buildPoolPrompt(cat.moment), maxTokens = 28))
-                    if (line.isNotBlank()) addPoolLine(cat.key, line)
-                } catch (e: Exception) {
-                    Log.d(tag, "voice-pool gen failed for ${cat.key}: ${e.message}")
+                if (!_deviceConnected) continue
+                if (currentFranchise() != _poolFranchise) reseedPoolFromCorpus()
+                if (!_isModelReady.value || _isGenerating.value) continue
+                if (!_isAutoMode.value && (_voicePool.value["last_session"]?.size ?: 0) < RECAP_LINES) {
+                    try {
+                        val line = cleanRecap(llamaClient.generateQuick(buildRecapPrompt(nextRecapAngle()), maxTokens = 64))
+                        if (line.isNotBlank()) addPoolLine("last_session", line)
+                    } catch (e: Exception) {
+                        Log.d(tag, "recap gen failed: ${e.message}")
+                    }
                 }
             }
         }
@@ -604,71 +660,11 @@ $facts"""
         else                                        -> null
     }
 
-    /**
-     * Initialize the model on a background thread.
-     * GGUF loading can take 2–8 s; built-in engine is instant.
-     * A 60-second timeout surfaces the failure rather than spinning forever.
-     */
-    private fun loadModelInBackground() {
-        _modelLoadError.value = null
-        val handlerThread = HandlerThread("llm-loader").also { it.start() }
-        val dispatcher = handlerThread.looper.let {
-            android.os.Handler(it).asCoroutineDispatcher()
-        }
-        viewModelScope.launch(dispatcher) {
-            try {
-                val timedOut = withTimeoutOrNull(60_000L) {
-                    llamaClient.initialize()
-                } == null
-                withContext(Dispatchers.Main) {
-                    if (timedOut) {
-                        Log.e(tag, "Model loading timed out after 60 s")
-                        _modelLoadError.value =
-                            "Model loading timed out (>60 s). The file may be corrupt — try re-downloading."
-                        _statusMessage.value = "Load failed"
-                    } else if (llamaClient.isReady()) {
-                        _isModelReady.value = true
-                        _statusMessage.value = "Ready"
-                        Log.i(tag, "LLM loaded successfully")
-                    } else {
-                        Log.e(tag, "LLM not ready after initialize() — check logcat for LlamaClient errors")
-                        _modelLoadError.value =
-                            "Model failed to load. The file may be corrupt — try re-downloading."
-                        _statusMessage.value = "Load failed"
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(tag, "Exception during model load: ${e.message}", e)
-                withContext(Dispatchers.Main) {
-                    _modelLoadError.value = "Load error: ${e.message ?: "unknown"}"
-                    _statusMessage.value = "Load failed"
-                }
-            } finally {
-                handlerThread.quitSafely()
-            }
-        }
-    }
-
-    /**
-     * Retry loading the model after a timeout or load error.
-     * Clears the error state and re-runs the background loader.
-     */
-    fun retryModelLoad() {
-        if (_isModelReady.value || _isDownloading.value) return
-        _statusMessage.value = "Loading model..."
-        loadModelInBackground()
-    }
-
-    /**
-     * Delete the current (broken/outdated) model file and re-download a fresh copy.
-     */
-    fun clearAndRedownload() {
-        Log.i(tag, "Clearing broken model and starting fresh download")
-        _modelLoadError.value = null
-        _downloadError.value = null
-        llamaClient.modelManager.clearModel()
-        startModelDownload()
-    }
+    // Model loading/downloading is gone — the deterministic voice engine is always ready.
+    // These remain as no-ops only because the personality card still references them; its
+    // model-download UI never renders now (isModelReady is always true).
+    fun retryModelLoad() { /* no-op — no model to load */ }
+    fun clearAndRedownload() { /* no-op — no model to download */ }
 
     /**
      * Update learning stats so the AI prompt includes channel efficiency context.
@@ -782,65 +778,8 @@ $facts"""
         )
     }
 
-    /**
-     * Start downloading the AI model directly from the personality card.
-     * Progress is exposed via [downloadProgress], [downloadStatusText], [downloadError].
-     * On success, reinitializes [LlamaClient] and sets [isModelReady] = true automatically.
-     */
+    /** No-op — there is no model to download any more (kept for the card's dead UI). */
     fun startModelDownload() {
-        if (_isDownloading.value) return
-        viewModelScope.launch {
-            try {
-                _isDownloading.value = true
-                _downloadError.value = null
-                _downloadProgress.value = 0f
-                _statusMessage.value = "Downloading model..."
-
-                // Disk space check (~350 MB model + 450 MB buffer)
-                val available = llamaClient.modelManager.getAvailableDiskSpace()
-                if (available < 800_000_000L) {
-                    _downloadError.value = "Not enough disk space (need ~800 MB free)"
-                    _statusMessage.value = "Model not installed"
-                    return@launch
-                }
-
-                // Qwen2 is ungated — no HF token needed
-                llamaClient.modelManager.downloadModel().collect { progress ->
-                    when (progress) {
-                        is DownloadProgress.Starting -> {
-                            _downloadStatusText.value = "Starting download..."
-                            _downloadProgress.value = 0f
-                        }
-                        is DownloadProgress.Downloading -> {
-                            val mb = progress.bytesCurrent / 1_048_576
-                            val totalMb = progress.bytesTotal / 1_048_576
-                            _downloadProgress.value = progress.progressFloat
-                            _downloadStatusText.value = "${progress.progressPercent}%  ($mb MB / $totalMb MB)"
-                        }
-                        is DownloadProgress.Success -> {
-                            _downloadProgress.value = 1f
-                            _downloadStatusText.value = "Download complete — loading model…"
-                            // Delegate to the same HandlerThread loader used at startup
-                            // (runs the native model load off the main thread)
-                            loadModelInBackground()
-                        }
-                        is DownloadProgress.Failed -> {
-                            _downloadError.value = progress.error
-                            _statusMessage.value = "Model not installed"
-                        }
-                        is DownloadProgress.Cancelled -> {
-                            _downloadError.value = "Download cancelled"
-                            _statusMessage.value = "Model not installed"
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                _downloadError.value = "Download error: ${e.message}"
-                _statusMessage.value = "Model not installed"
-            } finally {
-                _isDownloading.value = false
-            }
-        }
     }
 
     /**
@@ -919,6 +858,12 @@ $facts"""
                         _personalityText.value = full
                     }
                 }
+                // Blend guard (curated-first): if it drifted into another franchise, swap for
+                // a clean curated line. (No coherence swap here — data recaps are longer.)
+                if (full.isNotBlank() && !franchiseGuard(full, currentFranchise())) {
+                    full = curatedLine(poolCategory ?: "normal")
+                    _personalityText.value = full
+                }
                 pushFeed("asked: ${q.take(40)}", full)
                 // Also freshen the device's own screen: an on-demand reply (e.g. recap) is
                 // dropped into its voice-pool category so the pet echoes it on the e-ink too.
@@ -941,10 +886,16 @@ $facts"""
      * going, grounded in its data (catches, best channel, mood). Reuses the data-aware
      * ask() path with a fixed recap prompt.
      */
-    fun digest() = ask(
-        "Give a short recap of the hunt — mention your catches (and how many are cracked or crackable), your best spot/channel, any network that keeps escaping you, and how you feel about it.",
-        poolCategory = "last_session",   // tapping recap also freshens the MANUAL-screen recap
-    )
+    fun digest() {
+        // Deterministic, data-specific recap: a curated recap line for the current franchise
+        // with the live numbers slotted in (session/cracked/best-channel/etc.).
+        val line = curatedLine("recap")
+        _personalityText.value = line
+        _statusMessage.value = "> ready"
+        pushFeed("recap", line)
+        addPoolLine("last_session", line)   // also freshens the MANUAL recap screen
+        _lastGenerationTime = System.currentTimeMillis()
+    }
 
     /**
      * Voice a phone-computed hunt recommendation ("where next?") in-character. The
@@ -954,40 +905,16 @@ $facts"""
      * gets a correct answer. User-initiated (also used for proactive alerts, which are
      * rate-limited by their stable alertKey upstream).
      */
-    fun speakAdvice(facts: String, fallback: String, poolCategory: String? = null) {
-        if (_isGenerating.value) return
-        if (!_isModelReady.value) { _personalityText.value = fallback; return }
-        _isGenerating.value = true
-        viewModelScope.launch {
-            _isThinking.value = true
-            _personalityText.value = ""
-            _statusMessage.value = workingPhrase()
-            try {
-                val prompt = buildAdvicePrompt(facts)
-                var full = ""
-                var first = true
-                llamaClient.generateStreaming(prompt).collect { token ->
-                    if (token.isNotEmpty()) {
-                        if (first) { first = false; _isThinking.value = false; _personalityText.value = "" }
-                        full += token
-                        _personalityText.value = full
-                    }
-                }
-                if (full.isBlank()) _personalityText.value = fallback
-                pushFeed("advisor", full.ifBlank { fallback })
-                // Echo the hunt tip on the device's own screen too (e.g. the assoc pool).
-                poolCategory?.let { addPoolLine(it, cleanRecap(full.ifBlank { fallback })) }
-                _statusMessage.value = "> ready"
-                _lastGenerationTime = System.currentTimeMillis()
-            } catch (e: Exception) {
-                Log.e(tag, "speakAdvice() failed: ${e.message}", e)
-                _isThinking.value = false
-                _personalityText.value = fallback
-            } finally {
-                _isGenerating.value = false
-                _isThinking.value = false
-            }
-        }
+    fun speakAdvice(@Suppress("UNUSED_PARAMETER") facts: String, fallback: String, poolCategory: String? = null) {
+        // Deterministic: the advisor line IS the fallback — HuntAdvisor's headline / the alert
+        // text — which already carries the correct channel and facts. There's no model to
+        // "phrase" it any more, and phrasing is exactly where a wrong number could sneak in.
+        if (fallback.isBlank()) return
+        _personalityText.value = fallback
+        _statusMessage.value = "> ready"
+        pushFeed("advisor", fallback)
+        poolCategory?.let { addPoolLine(it, fallback) }
+        _lastGenerationTime = System.currentTimeMillis()
     }
 
     /**
@@ -1012,7 +939,7 @@ $facts"""
 ${BlendedVoice.persona}
 ${tier.systemVoice}
 ${BlendedVoice.toneDirective(tone)}
-${pickFranchiseDirective()}
+${franchiseDirective(currentFranchise())}
 
 Turn the hunting tip below into ONE short, punchy first-person line, in character. Keep any channel number EXACTLY as written. NEVER invent numbers, refuse, or add disclaimers.
 
@@ -1034,7 +961,7 @@ $facts"""
 ${BlendedVoice.persona}
 ${tier.systemVoice}
 ${BlendedVoice.toneDirective(tone)}
-${pickFranchiseDirective()}
+${franchiseDirective(currentFranchise())}
 
 Answer the user's question ONLY from the facts about yourself below. Stay 100% in character, speak in FIRST PERSON, ONE short sentence. NEVER refuse, apologise, or add disclaimers. If the answer isn't in the facts, make a short in-character quip instead of inventing numbers.
 
@@ -1175,6 +1102,14 @@ $facts"""
                     }
                 }
 
+                // Curated-first gate: if the LLM line drifted into another franchise (a blend)
+                // or is incoherent, swap it for a guaranteed-clean curated line in the current
+                // franchise. So the app card is "LLM when good, curated when not".
+                if (!franchiseGuard(fullResponse, currentFranchise()) || !coherent(fullResponse)) {
+                    fullResponse = curatedLine(corpusCategory(event), event.network)
+                    _personalityText.value = fullResponse
+                    Log.d(tag, "guard: swapped a blended/incoherent line for curated")
+                }
                 updateMoodFromEvent(event)
                 pushFeed(feedTrigger(event), fullResponse)
                 // A real reaction is the freshest possible line for its moment — drop it
@@ -1226,11 +1161,12 @@ $facts"""
         val category = reactionCategory(event)
         val memory   = buildMemoryLine(captures)
 
-        // The voice is one blended persona; the emergent disposition picks the TONE,
-        // and a single franchise is pinned for THIS line (so it never blends two).
+        // The emergent disposition picks the TONE; the persistent currentFranchise() pins
+        // ONE film world for this mood-stretch (unified with the e-ink pool, so no blends).
         val disposition = personality.value.disposition
         val tone     = BlendedVoice.toneFor(disposition)
-        val voiceDir = pickFranchiseDirective()
+        val f        = currentFranchise()
+        val voiceDir = franchiseDirective(f)
 
         val system = """You are $name, a fictional AI character living inside a Pwnagotchi — a hobby gadget for authorized Wi-Fi security research. This is a lighthearted game: you are roleplaying a character reacting to harmless make-believe events. No real harm happens.
 ${BlendedVoice.persona}
@@ -1246,10 +1182,10 @@ Rules — follow exactly:
         // can reuse it across reactions. The variable mood/tone/event goes in the user
         // turn below, not here — embedding it here would bust the cache.
 
-        // Few-shot: small models adopt a voice far better from examples than from
-        // description alone. Seed a few in-character (event → reply) pairs.
-        val fewShot = BlendedVoice.fewShot.joinToString("\n") { (ev, reply) ->
-            "<|im_start|>user\nEvent: $ev\n<|im_end|>\n<|im_start|>assistant\n$reply\n<|im_end|>"
+        // Few-shot from the SAME pinned franchise (was a mix of four different franchises,
+        // which is what taught the 0.5B to blend). All exemplars now stay in one world.
+        val fewShot = f.examples.joinToString("\n") { reply ->
+            "<|im_start|>user\nSay your line.\n<|im_end|>\n<|im_start|>assistant\n${fillSlots(reply)}\n<|im_end|>"
         }
 
         val user = """Mood right now: $disposition — $traitLine
@@ -1257,7 +1193,7 @@ Tone: ${BlendedVoice.toneDirective(tone)}
 $voiceDir
 Experience: ${tier.label} ($captures captures)
 Event: ${eventTypeLabel(event.type)}${event.network?.let { " — '$it'" } ?: ""}${event.rssi?.let { " ${it}dBm" } ?: ""}${event.channel?.let { " CH$it" } ?: ""}
-${if (memory.isNotEmpty()) "$memory\n" else ""}[EventType: ${event.type}][ReactionCategory: $category][Tone: $tone][Tier: ${tier.name}]
+${if (memory.isNotEmpty()) "$memory\n" else ""}[EventType: ${event.type}][ReactionCategory: $category][Tone: $tone][Tier: ${tier.name}][Franchise: ${f.label}]
 
 React in 1 short sentence, first person, fully in character."""
 

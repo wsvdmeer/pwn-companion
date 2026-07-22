@@ -89,6 +89,10 @@ data class ScreenData(
     @SerialName("bssid")
     val bssid: String? = null,
 
+    // Deauth target — the client station MAC (sent top-level by the plugin for deauth events).
+    @SerialName("station")
+    val station: String? = null,
+
     @SerialName("security")
     val security: String? = null,
 

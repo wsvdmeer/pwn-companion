@@ -58,12 +58,6 @@
             android:foregroundServiceType="connectedDevice"
             android:enabled="true" />
 
-        <!-- Model Download Service -->
-        <service
-            android:name=".services.ModelDownloadService"
-            android:enabled="true"
-            android:exported="false" />
-
         <!-- Bluetooth Connection Receiver -->
         <receiver
             android:name=".receivers.BluetoothConnectionReceiver"

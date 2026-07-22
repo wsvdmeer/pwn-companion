@@ -12,11 +12,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
-import com.wsvdmeer.pwncompanion.ai.ModelManager
 import com.wsvdmeer.pwncompanion.protocol.MessageHandler
 import com.wsvdmeer.pwncompanion.protocol.OutgoingMessageQueue
 import com.wsvdmeer.pwncompanion.presentation.ui.MainScreen
-import com.wsvdmeer.pwncompanion.presentation.ui.ModelDownloadScreen
 import com.wsvdmeer.pwncompanion.presentation.theme.PwnCompanionTheme
 import com.wsvdmeer.pwncompanion.services.CompanionBackgroundService
 import com.wsvdmeer.pwncompanion.services.NetworkService
@@ -41,7 +39,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 class MainActivity : ComponentActivity() {
     private val tag = "MainActivity"
     private val viewModel: MainViewModel by viewModels()
-    private val modelManager: ModelManager by lazy { ModelManager(this) }
 
     // Service references
     private var networkService: NetworkService? = null
@@ -49,7 +46,6 @@ class MainActivity : ComponentActivity() {
     private var outgoingQueue: OutgoingMessageQueue? = null
 
     private var serviceIntentStarted = false
-    private var modelDownloadComplete = false
 
     /**
      * Single batched permission launcher.
@@ -82,30 +78,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         Log.i(tag, "MainActivity created")
 
-        // Paint an immediate lightweight loading frame so the window isn't blank while we
-        // resolve model state off the main thread.
-        showLoadingScreen()
-
-        // Show model download screen on first run / after model version update.
-        // The built-in personality engine is always available as fallback if the user skips.
-        // The one-time cacheDir→filesDir migration + version check touch disk (and can copy
-        // a ~350 MB model on a cross-filesystem rename), so they run on Dispatchers.IO — NOT
-        // the main thread — to avoid an ANR during launch.
-        Log.i(tag, "Checking model availability (off main thread)…")
-        lifecycleScope.launch {
-            val needsUpdate = withContext(Dispatchers.IO) {
-                modelManager.migrateFromCacheDir()
-                modelManager.needsUpdate()
-            }
-            if (needsUpdate) {
-                Log.i(tag, "Model not available or outdated — showing download screen")
-                showDownloadScreen()
-            } else {
-                Log.i(tag, "Qwen2 model already downloaded — skipping download screen")
-                modelDownloadComplete = true
-                showMainScreen()
-            }
-        }
+        // The voice is fully on-device + deterministic now (no model download) — go
+        // straight to the console.
+        showMainScreen()
 
         // Initialize ViewModel immediately (AI engine, UI state)
         lifecycleScope.launch { initializeViewModel() }
@@ -166,44 +141,6 @@ class MainActivity : ComponentActivity() {
         Log.i(tag, "All permissions resolved — starting companion service & BT monitor")
         startCompanionService()
         initializeBluetoothMonitor()
-    }
-
-    /** Minimal terminal-style splash shown while model state is resolved off-thread. */
-    private fun showLoadingScreen() {
-        setContent {
-            PwnCompanionTheme {
-                androidx.compose.material3.Surface(
-                    modifier = androidx.compose.ui.Modifier.fillMaxSize(),
-                    color = androidx.compose.material3.MaterialTheme.colorScheme.background
-                ) {
-                    androidx.compose.foundation.layout.Box(
-                        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
-                        contentAlignment = androidx.compose.ui.Alignment.Center
-                    ) {
-                        androidx.compose.material3.Text(
-                            text = "pwncompanion · loading…",
-                            color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    /** Show the model download screen. Calls showMainScreen() when done or skipped. */
-    private fun showDownloadScreen() {
-        setContent {
-            PwnCompanionTheme {
-                ModelDownloadScreen(
-                    application       = application,
-                    onDownloadComplete = {
-                        modelDownloadComplete = true
-                        showMainScreen()
-                    }
-                )
-            }
-        }
     }
 
     /** Render main Compose content. */

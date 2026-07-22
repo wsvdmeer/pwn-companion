@@ -229,22 +229,33 @@ class PwnagotchiEventBroadcaster:
         except Exception as e:
             log.error(f"[pwn-companion] Error in on_connection_failure: {e}")
 
-    async def on_anomaly_detected(self, anomaly_type: str, details: dict = None):
+    async def on_anomaly_detected(self, anomaly_type: str, details: dict = None,
+                                  network: str = None, channel=None, bssid: str = None,
+                                  station: str = None):
         """
         Called when an anomaly is detected in network activity
 
         Args:
-            anomaly_type: Type of anomaly (deauth_spike, unusual_probe, etc.)
-            details: Additional details about the anomaly
+            anomaly_type: Type of anomaly (deauthentication, unusual_probe, etc.)
+            network/channel/bssid: the AP involved; station: the client MAC targeted
+                (for a deauth). These are sent TOP-LEVEL — the app's ScreenData only
+                deserializes top-level keys, so nesting them in `details` would drop them.
         """
         try:
             event = {
                 "type": "network_event",
                 "event_type": "anomaly_detected",
                 "anomaly_type": anomaly_type,
+                "network": network,
+                "channel": channel,
+                "bssid": bssid,
+                "station": station,     # deauth TARGET (client MAC)
                 "details": details or {},
                 "timestamp": int(time.time()),
-                "description": f"Anomaly detected: {anomaly_type}"
+                "description": (
+                    f"Deauth {station or network or bssid or ''}"
+                    + (f" CH{channel}" if channel else "")
+                ).strip() if anomaly_type == "deauthentication" else f"Anomaly detected: {anomaly_type}",
             }
 
             log.warning(f"[pwn-companion]  AI Event: {event['description']}")
@@ -1073,13 +1084,21 @@ class PwnCompanion(Plugin):
         self._agent = agent
         try:
             channel = ap.get("channel", 0) if isinstance(ap, dict) else 0
-            ssid = ap.get("hostname", "") or ap.get("essid", "unknown") if isinstance(ap, dict) else str(ap)
-            log.debug(f"[pwn-companion]  Deauth: {ssid} CH{channel}")
+            ssid = (ap.get("hostname", "") or ap.get("essid", "")) if isinstance(ap, dict) else str(ap)
+            bssid = (ap.get("mac", "") or ap.get("bssid", "")) if isinstance(ap, dict) else ""
+            # The deauth TARGET is a client station MAC — previously ignored, which is why
+            # the app's log line had nothing to show and fell back to "spectrum".
+            sta_mac = station.get("mac", "") if isinstance(station, dict) else ""
+            log.debug(f"[pwn-companion]  Deauth: sta={sta_mac} ap={ssid} CH{channel}")
             if self.event_broadcaster and self.app_connected:
                 self._schedule_on_loop(
                     self.event_broadcaster.on_anomaly_detected(
                         anomaly_type="deauthentication",
-                        details={"channel": channel, "network": ssid}
+                        network=ssid or None,
+                        channel=channel or None,
+                        bssid=bssid or None,
+                        station=sta_mac or None,
+                        details={"channel": channel, "network": ssid},
                     ),
                     self.loop
                 )

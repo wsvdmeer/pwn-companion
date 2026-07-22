@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -235,28 +236,39 @@ fun LearningDetailScreen(viewModel: MainViewModel, paddingValues: PaddingValues,
             Spacer(Modifier.height(10.dp))
             Text("activity by hour", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
             Spacer(Modifier.height(2.dp))
-            // Drawn bars (not block glyphs — Share Tech Mono lacks ▁▂▃, so those fell back
-            // to a different-width font and broke alignment). 24 fixed 10dp columns; the
-            // axis uses 6-column (60dp) slots so 0/6/12/18 sit exactly under their hours.
+            // Full-width bars: 24 equal-weight columns (hours 0–23) fill the row and grow
+            // from the bottom. The axis shows 7 evenly-spaced ticks 0·4·8·12·16·20·24 across
+            // the same full width (0 at the left edge = midnight, 24 at the right edge).
             val byHour = (0..23).map { h -> s.hourlyStats.firstOrNull { it.hour == h }?.intensity ?: 0f }
             val maxI = byHour.maxOrNull()?.takeIf { it > 0f } ?: 1f
-            val barMax = 30.dp
-            Row(modifier = Modifier.height(barMax)) {
+            val barMax = 44.dp
+            Row(modifier = Modifier.fillMaxWidth().height(barMax)) {
                 byHour.forEach { intensity ->
                     val frac = (intensity / maxI).coerceIn(0f, 1f)
                     Box(
-                        modifier = Modifier.width(10.dp).height(barMax),
+                        modifier = Modifier.weight(1f).fillMaxHeight().padding(horizontal = 1.dp),
                         contentAlignment = Alignment.BottomCenter
                     ) {
-                        if (frac > 0f) Box(Modifier.width(8.dp).height(barMax * frac).background(primary))
+                        if (frac > 0f) Box(Modifier.fillMaxWidth().fillMaxHeight(frac).background(primary))
                     }
                 }
             }
             Spacer(Modifier.height(2.dp))
-            Row {
-                for (t in intArrayOf(0, 6, 12, 18)) {
-                    Box(Modifier.width(60.dp)) {
-                        Text("$t", color = dim.copy(alpha = 0.6f), fontSize = 9.sp, fontFamily = TerminalMono)
+            val ticks = listOf(0, 4, 8, 12, 16, 20, 24)
+            Row(modifier = Modifier.fillMaxWidth()) {
+                ticks.forEachIndexed { i, h ->
+                    Box(
+                        modifier = Modifier.weight(1f),
+                        contentAlignment = when (i) {
+                            0 -> Alignment.CenterStart
+                            ticks.lastIndex -> Alignment.CenterEnd
+                            else -> Alignment.Center
+                        }
+                    ) {
+                        Text(
+                            "$h", color = dim.copy(alpha = 0.6f), fontSize = 9.sp,
+                            fontFamily = TerminalMono, maxLines = 1, softWrap = false
+                        )
                     }
                 }
             }
@@ -283,11 +295,16 @@ fun LearningDetailScreen(viewModel: MainViewModel, paddingValues: PaddingValues,
                         "ch${ch.channel.toString().padEnd(3)} ",
                         color = rowColor, fontSize = 12.sp, lineHeight = 18.sp, fontFamily = TerminalMono
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    // Bars fill the width between the channel label and the count/yield.
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
                         repeat(10) { i ->
                             Box(
                                 Modifier
-                                    .size(width = 9.dp, height = 11.dp)
+                                    .weight(1f)
+                                    .height(11.dp)
                                     .background(if (i < bars) rowColor else off)
                             )
                         }

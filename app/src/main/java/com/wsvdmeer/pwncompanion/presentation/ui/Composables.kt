@@ -443,45 +443,45 @@ fun MainContentArea(
             ConsoleRule()
         }
 
-        // ── ai — only when a device is connected (no live link = no pet/chat) ────
-        if (connectedDevices.isNotEmpty()) {
-            item {
-                PwnagotchiPersonalityCard(
-                    viewModel = pwnagotchiVM,
-                    pwnagotchiName = pwnagotchiName,
-                    isAutoMode = isAutoMode,
-                    onStats = {
-                        mainViewModel.openDetail(com.wsvdmeer.pwncompanion.presentation.DetailScreen.STATS)
-                    },
-                    whereNextEnabled = advice != null,
-                    onWhereNext = {
-                        // Voice it on the phone AND drop it into the device's `assoc` pool
-                        // so the pet echoes the current hunt tip on its own screen too.
-                        advice?.let { pwnagotchiVM.speakAdvice(it.llmFacts, it.headline, poolCategory = "assoc") }
-                    }
-                )
-                ConsoleRule()
-            }
-        }
+        // The pet's voice now lives on the pwnagotchi's own e-ink screen (voice pool), so the
+        // phone no longer shows a speech/pet card — it's a pure console. The ViewModel is
+        // still fed (mood/telemetry/captures/advice below) because that drives the e-ink voice.
 
-        // ── advisor — deauth "where to hunt now" (deterministic; pet voices it) ──
-        if (connectedDevices.isNotEmpty() && advice != null) {
+        // ── alerts — only when there's actually something to warn about (a mission alert
+        // or an untapped target to chase); otherwise the section is hidden entirely. ──
+        if (connectedDevices.isNotEmpty() && advice != null &&
+            (advice.warnings.isNotEmpty() || untappedTarget != null)) {
             item {
                 ConsoleAdvisorBlock(advice, untappedTarget)
                 ConsoleRule()
             }
         }
 
-        // ── learning — directly below ai, always visible ─────────
-        if (connectedDevices.isNotEmpty() && learningStats != null) {
+        // ── steering — live: the channels + params the phone is working right now ──
+        if (connectedDevices.isNotEmpty() && (channelPriority.isNotEmpty() || tuning != null)) {
             item {
-                ConsoleLearningBlock(learningStats, onOpen = {
-                    mainViewModel.openDetail(com.wsvdmeer.pwncompanion.presentation.DetailScreen.LEARNING)
-                })
-                // Visual readout of what the phone-side AI is doing to the device: the
-                // steered channels as cells + the auto-tuned params as gauges.
-                if (channelPriority.isNotEmpty() || tuning != null) {
-                    ConsoleSteeringBlock(channelPriority, tuning)
+                ConsoleSteeringBlock(channelPriority, tuning)
+                ConsoleRule()
+            }
+        }
+
+        // ── history — aggregate learning (channels/times/locations) lives in its detail
+        // screen now; the main console keeps only a one-line link to it. ──
+        if (connectedDevices.isNotEmpty()) {
+            item {
+                val seen = learningStats?.totalObservations ?: 0
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        mainViewModel.openDetail(com.wsvdmeer.pwncompanion.presentation.DetailScreen.LEARNING)
+                    },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    ConsoleLabel("[ history ]")
+                    Text(
+                        if (seen > 0) "$seen networks seen · details ›" else "details ›",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp,
+                    )
                 }
                 ConsoleRule()
             }
@@ -648,8 +648,7 @@ private fun ConsoleStatusBlock(
     }
     ConsoleRow(
         "version",
-        "v${com.wsvdmeer.pwncompanion.BuildConfig.VERSION_NAME}" +
-            if (modelName.isNotBlank()) " · $modelName" else "",
+        "v${com.wsvdmeer.pwncompanion.BuildConfig.VERSION_NAME}",
         dim
     )
     // GPS is shown compactly with just a fix indicator here; full detail is in the
@@ -669,10 +668,11 @@ private fun ConsoleStatusBlock(
 private fun ConsoleAdvisorBlock(advice: com.wsvdmeer.pwncompanion.ai.HuntAdvice, untapped: String?) {
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     val error = MaterialTheme.colorScheme.error
+    // Alerts only. The channel "try chX" headline was dropped — the [ steering ] section
+    // shows the channels the bandit is actually working, which is the honest source of truth.
     Column {
-        ConsoleLabel("[ advisor ]")
+        ConsoleLabel("[ alerts ]")
         Spacer(modifier = Modifier.height(4.dp))
-        Text(advice.headline, color = Color.White, fontSize = 12.sp, lineHeight = 18.sp)
         untapped?.let {
             Text("» chase: $it", color = dim, fontSize = 12.sp, lineHeight = 18.sp)
         }
@@ -700,23 +700,27 @@ private fun ConsoleSteeringBlock(
     val primary = MaterialTheme.colorScheme.primary
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     val off = dim.copy(alpha = 0.22f)
-    if (channels.isNotEmpty()) {
-        Row(modifier = Modifier.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("recon".padEnd(7) + ": ", color = dim, fontSize = 12.sp, lineHeight = 18.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                (1..11).forEach { ch ->
-                    Box(Modifier.size(width = 8.dp, height = 11.dp).background(if (ch in channels) primary else off))
+    Column {
+        ConsoleLabel("[ steering ]")
+        Spacer(modifier = Modifier.height(4.dp))
+        if (channels.isNotEmpty()) {
+            Row(modifier = Modifier.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("recon".padEnd(7) + ": ", color = dim, fontSize = 12.sp, lineHeight = 18.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    (1..11).forEach { ch ->
+                        Box(Modifier.size(width = 8.dp, height = 11.dp).background(if (ch in channels) primary else off))
+                    }
                 }
+                Text("  ch ${channels.joinToString(",")}", color = primary, fontSize = 12.sp, lineHeight = 18.sp, maxLines = 1)
             }
-            Text("  ch ${channels.joinToString(",")}", color = primary, fontSize = 12.sp, lineHeight = 18.sp, maxLines = 1)
         }
-    }
-    tuning?.let { t ->
-        ConsoleBarRow("rssi", rangeFrac(t.minRssi, -90, -55), "${t.minRssi}dBm", primary)
-        ConsoleBarRow("recon", rangeFrac(t.reconTime, 10, 60), "${t.reconTime}s", primary)
-        ConsoleBarRow("ap ttl", rangeFrac(t.apTtl, 30, 300), "${t.apTtl}s", dim)
-        ConsoleBarRow("sta ttl", rangeFrac(t.staTtl, 60, 600), "${t.staTtl}s", dim)
-        ConsoleBarRow("hop", rangeFrac(t.hopRecon, 2, 30), "${t.hopRecon}s", dim)
+        tuning?.let { t ->
+            ConsoleBarRow("rssi", rangeFrac(t.minRssi, -90, -55), "${t.minRssi}dBm", primary)
+            ConsoleBarRow("recon", rangeFrac(t.reconTime, 10, 60), "${t.reconTime}s", primary)
+            ConsoleBarRow("ap ttl", rangeFrac(t.apTtl, 30, 300), "${t.apTtl}s", dim)
+            ConsoleBarRow("sta ttl", rangeFrac(t.staTtl, 60, 600), "${t.staTtl}s", dim)
+            ConsoleBarRow("hop", rangeFrac(t.hopRecon, 2, 30), "${t.hopRecon}s", dim)
+        }
     }
 }
 

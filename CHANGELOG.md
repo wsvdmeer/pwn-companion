@@ -4,6 +4,37 @@ All significant changes to PwnCompanion, most recent first.
 
 ---
 
+## Session — 2026-07-22
+
+### Removed the on-device LLM — voice is now fully deterministic
+
+| Area | Detail |
+|------|--------|
+| Why | After the curated-first shift, the ~491 MB Qwen2.5-0.5B's only job was phrasing a few live numbers. Not worth the download + 800 MB free-space + RAM/battery + native build + refusal-handling. **Removed entirely.** |
+| Voice engine | `BuiltinPersonalityEngine` is now THE voice: selects from `BlendedVoice.corpus[franchise][reaction-category]` (10 franchises × 8 categories), fills live-data slots (`[SESSION]`/`[CRACKED]`/`[BESTCH]`/`[CHANNEL]`/`[TEMP]`/`[SINCE]`) from real capture stats. Instant, offline, never off-character |
+| Persistent franchise | One film-world pinned per mood-stretch (`currentFranchise()`), rotating only on disposition flip — unified across the app **and** the e-ink voice pool |
+| Deleted | `GgufInference.kt`, `ModelManager.kt`, `ModelDownloadViewModel.kt`, `ModelDownloadScreen.kt`, `ModelDownloadService.kt`, `app/src/main/cpp/` (CMake + llama_jni). `LlamaClient` gutted to a thin deterministic wrapper (kept signatures) |
+| Build | Dropped `ndk.abiFilters`, `externalNativeBuild { cmake }`, `noCompress "gguf"`, okhttp; removed `ModelDownloadService` from the manifest. App opens straight to the console — no download screen |
+| Fixed | Init-order NPE (`fillSlots` read `_captureStats` before it was assigned during the init-time reseed) |
+
+### UI streamlining (no LLM → no "AI" chrome)
+
+| Area | Detail |
+|------|--------|
+| Pet card removed | The phone-side personality card is gone — the voice lives on the pwnagotchi's own e-ink now. Also removed the `voice:` line and every "AI" label |
+| Advisor → `[ alerts ]` | Dropped the misleading "try chX" headline; the section shows **only** genuine problems (blind/hot/dry/no-clients) + the untapped-target chase, and stays **hidden when there's nothing to warn about** |
+| Learning → `[ history ]` | The full learning block became a one-line link to the detail screen; `[ steering ]` is its own live section on the main console |
+| Learning detail | Activity-by-hour graph rebuilt full-width with a correct `0·4·8·12·16·20·24` axis (was cut off); channel bars widened |
+| Manual mode | Distinct lines (was falsely showing "patrolling" while paused) |
+
+### Deauth/anomaly log data
+
+| Area | Detail |
+|------|--------|
+| Real station/channel | `on_deauthentication` now threads the station MAC + channel + bssid; `on_anomaly_detected` emits them top-level. Log line shows the actual target instead of "spectrum" |
+
+---
+
 ## Session — 2026-07-20
 
 ### Handshake cracking pipeline
