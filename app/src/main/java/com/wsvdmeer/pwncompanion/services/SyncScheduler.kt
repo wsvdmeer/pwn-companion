@@ -87,10 +87,6 @@ class SyncScheduler(
     // Sync state tracking (for UI indicators)
     var lastStrategySync: Long = 0
         private set
-    var lastLocationSync: Long = 0
-        private set
-    var lastTimeSync: Long = 0
-        private set
     var isSyncing: Boolean = false
         private set
     var lastError: String? = null
@@ -106,7 +102,10 @@ class SyncScheduler(
     ) {
         Log.i(tag, "Starting periodic sync for device: $deviceId")
 
-        // Strategy sync: every 45 seconds
+        // Strategy sync: every 45 seconds (channel steering + param tuning). The old
+        // location-learning (60 min) and time-of-day (7 day) loops were never implemented —
+        // they only stamped a timestamp — so they've been removed rather than waking the
+        // device for nothing. Location/time intel is already folded into the steering scorer.
         coroutineScope.launch {
             while (isActive) {
                 try {
@@ -118,31 +117,7 @@ class SyncScheduler(
             }
         }
 
-        // Location learning sync: every 60 minutes
-        coroutineScope.launch {
-            while (isActive) {
-                try {
-                    delay(3_600_000)  // 60 minutes
-                    sendLocationLearning(deviceId)
-                } catch (e: Exception) {
-                    Log.e(tag, "Error in location sync loop: ${e.message}", e)
-                }
-            }
-        }
-
-        // Time-of-day learning sync: every 7 days
-        coroutineScope.launch {
-            while (isActive) {
-                try {
-                    delay(7 * 24 * 3_600_000L)  // 7 days
-                    sendTimeLearning(deviceId)
-                } catch (e: Exception) {
-                    Log.e(tag, "Error in time sync loop: ${e.message}", e)
-                }
-            }
-        }
-
-        Log.i(tag, "All sync loops started successfully")
+        Log.i(tag, "Strategy sync loop started")
     }
 
     /**
@@ -350,62 +325,6 @@ class SyncScheduler(
         lastStrategySync = now
         onSteer(channels)
         Log.i(tag, "Channel priority → [$csv] ($why) sent to ${targets.size} device(s)")
-    }
-
-    /**
-     * Send location learning data (60m interval).
-     * Medium frequency for geographic intelligence.
-     */
-    private suspend fun sendLocationLearning(deviceId: String) {
-        try {
-            isSyncing = true
-            lastError = null
-
-            Log.d(tag, "Sending location learning...")
-
-            // In real implementation, would:
-            // 1. Query memoryService.getBestChannelsForLocation() for top locations
-            // 2. Build LocationProfile objects
-            // 3. Queue via outgoingQueue.queueLocationLearningSync()
-
-            // For now, placeholder
-            lastLocationSync = System.currentTimeMillis()
-            Log.d(tag, "Location learning sent successfully")
-
-        } catch (e: Exception) {
-            Log.e(tag, "Error sending location learning: ${e.message}", e)
-            lastError = "Location sync failed: ${e.message?.take(50)}"
-        } finally {
-            isSyncing = false
-        }
-    }
-
-    /**
-     * Send time-of-day learning data (7d interval).
-     * Low frequency for temporal patterns.
-     */
-    private suspend fun sendTimeLearning(deviceId: String) {
-        try {
-            isSyncing = true
-            lastError = null
-
-            Log.d(tag, "Sending time-of-day learning...")
-
-            // In real implementation, would:
-            // 1. Query memoryService.getTimeOfDayProfiles()
-            // 2. Build TimeProfile objects
-            // 3. Queue via outgoingQueue.queueTimeLearningSync()
-
-            // For now, placeholder
-            lastTimeSync = System.currentTimeMillis()
-            Log.d(tag, "Time-of-day learning sent successfully")
-
-        } catch (e: Exception) {
-            Log.e(tag, "Error sending time learning: ${e.message}", e)
-            lastError = "Time sync failed: ${e.message?.take(50)}"
-        } finally {
-            isSyncing = false
-        }
     }
 
     /**

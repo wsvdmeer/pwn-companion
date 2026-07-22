@@ -402,16 +402,18 @@ private fun PixelBasemap(points: List<CaptureEntry>, current: GpsData?, modifier
                                 drawRect(Color(v, v, v), topLeft = Offset(ox + c * cw, oy + r * cw), size = Size(sq, sq))
                             }
                         }
-                        // Catches: bright green, filling the full cell (solid → pops vs grey).
+                        // Catches: bright green, same gapped square size as the basemap so the
+                        // markers sit ON the grid instead of overflowing it (was drawn at full
+                        // cell width `cw`, which made them larger than the map pixels).
                         val green = Color(0x3D, 0xFF, 0x6E)
                         for (i in g.catchCells) {
                             val c = i % g.cols; val r = i / g.cols
-                            drawRect(green, topLeft = Offset(ox + c * cw, oy + r * cw), size = Size(cw, cw))
+                            drawRect(green, topLeft = Offset(ox + c * cw, oy + r * cw), size = Size(sq, sq))
                         }
                         // You: orange — a warm colour clearly distinct from the green catches.
                         youCell?.let { i ->
                             val c = i % g.cols; val r = i / g.cols
-                            drawRect(Color(0xFF, 0xA5, 0x33), topLeft = Offset(ox + c * cw, oy + r * cw), size = Size(cw, cw))
+                            drawRect(Color(0xFF, 0xA5, 0x33), topLeft = Offset(ox + c * cw, oy + r * cw), size = Size(sq, sq))
                         }
                     }
                 }

@@ -145,8 +145,9 @@ class CompanionBackgroundService : Service() {
     private fun fullStop() {
         scope.launch {
             try {
-                // 1. Stop GpsService explicitly (will not auto-restart unless we send a new start intent)
-                stopService(Intent(this@CompanionBackgroundService, GpsService::class.java))
+                // 1. Stop GpsService via NetworkService so its gpsServiceRunning flag resets —
+                //    a direct stopService() would leave the flag stuck true and block a later restart.
+                networkService.stopGpsTracking()
 
                 // 2. Stop server + unregister BluetoothTetherMonitor + drain queues
                 networkService.cleanup()

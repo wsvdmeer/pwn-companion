@@ -1,32 +1,24 @@
 package com.wsvdmeer.pwncompanion.ai
 
 /**
- * The pet's voice — **curated-first**. On a 0.5B model, reliable personality comes from
- * hand-written lines, not generation. So the [Franchise] [corpus] below IS the voice:
- * a large set of single-franchise, in-character lines keyed by (franchise → category).
- * The LLM is *seasoning* on top — it runs occasionally and its output is used only if it
- * passes the franchise + coherence guard (see PwnagotchiViewModel); otherwise a curated
- * line is used. [BuiltinPersonalityEngine] selects from the corpus.
+ * The pet's voice — **fully deterministic, no model**. The [Franchise] [corpus] below IS the
+ * voice: a large set of single-franchise, in-character lines keyed by (franchise → category),
+ * selected by the emergent mood + a persistent franchise and filled with live data slots by
+ * PwnagotchiViewModel.fillSlots.
  *
- * ONE franchise is pinned at a time (a "current franchise" that persists for a stretch and
+ * ONE franchise is pinned at a time (a "current franchise" that persists for a mood-stretch and
  * rotates on a mood flip — see PwnagotchiViewModel.currentFranchise), so the pet reads as a
  * character *in a mood* rather than franchise-roulette, and never blends two worlds.
  *
- * Substitution tokens (resolved by [BuiltinPersonalityEngine]):
- *   [NETWORK]  → SSID, or "that network"
- *   [CAPTURES] → running handshake count, or "a few"
+ * Substitution tokens (resolved by fillSlots): [NETWORK] [CAPTURES] [SESSION] [CRACKED] [BESTCH].
  *
- * Corpus categories (unified; runtime maps its own vocab onto these — see catKey()):
- *   handshake · assoc · deauth · idle · excited · weary · normal · recap
+ * Corpus categories: handshake · assoc · deauth · idle · excited · weary · normal · recap
  */
 
-/** How the pet sounds right now — chosen by the emergent mood, not by the user. */
-enum class VoiceTone { HYPE, GRUMPY, WEARY, DEADPAN }
-
 /**
- * The cult-movie worlds the pet draws on — exactly ONE pinned at a time.
- * [cue] steers the LLM; [examples] are same-franchise few-shot; [keywords] are signature
- * tokens the franchise-guard uses to detect (and reject) a line that drifted into another world.
+ * The cult-film / game worlds the pet draws on — exactly ONE pinned at a time.
+ * [examples] are a per-franchise sample (fallback when a category is missing); [cue]/[keywords]
+ * are descriptive metadata.
  */
 enum class Franchise(
     val label: String,
@@ -248,49 +240,12 @@ enum class Franchise(
 
 object BlendedVoice {
 
-    /** Character description injected into the LLM system prompt (kept constant for KV-cache). */
-    val persona: String =
-        "You are a wisecracking hacker gremlin haunting a Pwnagotchi. You riff in the " +
-        "style of cult sci-fi, hacker, action and fantasy films, treating networks as " +
-        "prey and captured handshakes as trophies. Each reply channels EXACTLY ONE film " +
-        "world (named for you per line); stay fully inside it and NEVER blend two " +
-        "franchises in the same line. Let the references leak out naturally — don't " +
-        "announce which movie."
-
     /** All franchises. */
     val franchises: List<Franchise> = Franchise.entries
 
-    /** "> …" status phrases shown while the model generates. */
-    val thinking: List<String> = listOf(
-        "> loading the boomstick…",
-        "> there is no spoon…",
-        "> channeling the Force…",
-        "> casting Expelliarmus…",
-        "> following the white rabbit…",
-        "> revving the chainsaw…",
-        "> deauth in progress…",
-        "> reading from the Necronomicon…",
-    )
-
-    /** Map the emergent disposition label to a tone bucket. */
-    fun toneFor(disposition: String): VoiceTone = when (disposition.lowercase()) {
-        "cocky", "confident"   -> VoiceTone.HYPE
-        "frustrated"           -> VoiceTone.GRUMPY
-        "restless", "drained"  -> VoiceTone.WEARY
-        else                   -> VoiceTone.DEADPAN   // curious, composed, neutral
-    }
-
-    /** A short tone directive injected into the (variable) LLM user turn so mood steers voice. */
-    fun toneDirective(tone: VoiceTone): String = when (tone) {
-        VoiceTone.HYPE    -> "You're riding high — cocky, triumphant, swaggering. Gloat."
-        VoiceTone.GRUMPY  -> "You're pissed off — snarling, dark, short-tempered. Complain with menace."
-        VoiceTone.WEARY   -> "You're bored and drained — flat, unimpressed, world-weary."
-        VoiceTone.DEADPAN -> "You're level — dry, deadpan, quietly sharp."
-    }
-
     /**
-     * The curated voice: franchise → category → lines. This is the PRIMARY source of the
-     * pet's personality (the LLM only supplements). Every line stays inside ONE franchise.
+     * The curated voice: franchise → category → lines. This IS the pet's personality (fully
+     * deterministic — no model). Every line stays inside ONE franchise.
      * Categories: handshake · assoc · deauth · idle · excited · weary · normal · recap.
      */
     val corpus: Map<Franchise, Map<String, List<String>>> = mapOf(

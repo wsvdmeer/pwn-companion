@@ -29,15 +29,12 @@ object NotificationHelper {
     // (no status-bar icon, collapsed & silent in the shade) we must register NEW ids
     // and delete the old LOW ones.
     const val NETWORK_SERVICE_CHANNEL  = "network_service_v2"
-    const val LOCATION_SERVICE_CHANNEL = "location_service_v2"
-    const val NOTIFICATION_CHANNEL     = "general_notifications_channel"
-    // Alerts: user-facing events (cracked passwords, link up) — DEFAULT importance so
-    // they actually surface + make a sound, unlike the MIN foreground-service notices.
+    // Alerts: user-facing events (cracked passwords) — HIGH importance so they heads-up +
+    // make a sound, unlike the MIN foreground-service notice.
     const val ALERTS_CHANNEL           = "alerts_v2"
 
     // Notification IDs (must match those used in the services)
     const val NOTIFICATION_ID_NETWORK  = 1000
-    const val NOTIFICATION_ID_GPS      = 1002
     private const val NOTIFICATION_ID_ALERTS_SUMMARY = 1004
     private const val CRACKED_ID_BASE  = 2_000_000
 
@@ -51,12 +48,12 @@ object NotificationHelper {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-            // Retire the old LOW-importance channels so the quieter MIN ones apply.
+            // Retire old channels (renamed / removed) so their stale settings don't linger.
             nm.deleteNotificationChannel("network_service_channel")
             nm.deleteNotificationChannel("location_service_channel")
-            // Retire the old DEFAULT alerts channel so the HIGH (heads-up) one takes effect —
-            // a channel's importance is locked after creation, so we need a fresh id.
-            nm.deleteNotificationChannel("alerts_v1")
+            nm.deleteNotificationChannel("location_service_v2")        // GPS notice removed (shares the network one)
+            nm.deleteNotificationChannel("general_notifications_channel")
+            nm.deleteNotificationChannel("alerts_v1")                  // superseded by the HIGH alerts_v2
 
             // IMPORTANCE_MIN: no status-bar icon, no sound/vibration, collapsed at the
             // bottom of the shade, no app badge — a required-but-unobtrusive FGS notice.
@@ -69,25 +66,6 @@ object NotificationHelper {
                 enableLights(false)
                 enableVibration(false)
                 setShowBadge(false)
-            })
-
-            nm.createNotificationChannel(NotificationChannel(
-                LOCATION_SERVICE_CHANNEL,
-                "Location",
-                NotificationManager.IMPORTANCE_MIN
-            ).apply {
-                description = "GPS sent to the Pwnagotchi while connected"
-                enableLights(false)
-                enableVibration(false)
-                setShowBadge(false)
-            })
-
-            nm.createNotificationChannel(NotificationChannel(
-                NOTIFICATION_CHANNEL,
-                "General Notifications",
-                NotificationManager.IMPORTANCE_DEFAULT
-            ).apply {
-                description = "General app notifications"
             })
 
             nm.createNotificationChannel(NotificationChannel(
@@ -232,67 +210,6 @@ object NotificationHelper {
         return builder.build()
     }
 
-    // ── GPS / Location notification ───────────────────────────────────────────
-
-    /**
-     * Initial location notification shown when GpsService first starts.
-     * Call [updateLocationNotification] to refresh with real coordinates.
-     */
-    fun createLocationNotification(context: Context): Notification =
-        buildLocationNotification(context, lat = null, lon = null, accuracyM = null)
-
-    /**
-     * Update the GPS notification with the latest fix.
-     */
-    fun updateLocationNotification(
-        context: Context,
-        lat: Double,
-        lon: Double,
-        accuracyM: Float
-    ) {
-        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(NOTIFICATION_ID_GPS, buildLocationNotification(context, lat, lon, accuracyM))
-    }
-
-    private fun buildLocationNotification(
-        context: Context,
-        lat: Double?,
-        lon: Double?,
-        accuracyM: Float?
-    ): Notification {
-        val contentText = if (lat != null && lon != null && accuracyM != null) {
-            "${"%.5f".format(lat)}°, ${"%.5f".format(lon)}° · ±${"%.0f".format(accuracyM)}m"
-        } else {
-            "Acquiring GPS fix…"
-        }
-
-        return NotificationCompat.Builder(context, LOCATION_SERVICE_CHANNEL)
-            .setContentTitle("PwnCompanion · GPS")
-            .setContentText(contentText)
-            .setSmallIcon(com.wsvdmeer.pwncompanion.R.drawable.ic_stat_pwn)
-            .setPriority(NotificationCompat.PRIORITY_MIN)
-            .setShowWhen(false)
-            .setOngoing(true)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setContentIntent(mainActivityIntent(context))
-            .addAction(
-                android.R.drawable.ic_menu_close_clear_cancel,
-                "Stop",
-                stopGpsServiceIntent(context)
-            )
-            .build()
-    }
-
-    // ── General notification ──────────────────────────────────────────────────
-
-    fun createGeneralNotification(context: Context, title: String, message: String): Notification =
-        NotificationCompat.Builder(context, NOTIFICATION_CHANNEL)
-            .setContentTitle(title)
-            .setContentText(message)
-            .setSmallIcon(com.wsvdmeer.pwncompanion.R.drawable.ic_stat_pwn)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .build()
-
     // ── PendingIntents ────────────────────────────────────────────────────────
 
     /** Tap notification → open MainActivity */
@@ -317,14 +234,4 @@ object NotificationHelper {
         )
     }
 
-    /** Stop button → stop GpsService */
-    private fun stopGpsServiceIntent(context: Context): PendingIntent {
-        val intent = Intent(context, GpsService::class.java).apply {
-            action = GpsService.ACTION_STOP
-        }
-        return PendingIntent.getService(
-            context, 2, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-    }
 }
