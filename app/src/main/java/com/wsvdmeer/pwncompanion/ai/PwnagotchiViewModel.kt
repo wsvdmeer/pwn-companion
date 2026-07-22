@@ -139,14 +139,12 @@ enum class ExperienceTier(
 }
 
 /**
- * Pwnagotchi AI Personality ViewModel
- * Manages LLM interactions and personality feedback
+ * Pwnagotchi personality ViewModel — drives the deterministic voice.
  *
- * Real-time features:
- * - Streaming token generation
- * - Live token counter
- * - Status messages during generation
- * - Mood tracking for contextual responses
+ * The disposition emerges from the [PersonalityStateEngine] trait vector + experience tier;
+ * lines are selected from [BlendedVoice]'s curated per-franchise corpus (via [LlamaClient],
+ * a thin deterministic wrapper — no model) with live-data slots filled in. Also builds the
+ * e-ink voice pool the plugin speaks on the device's own screen.
  */
 class PwnagotchiViewModel(application: Application) : ViewModel() {
     private val llamaClient = LlamaClient(application)
@@ -165,35 +163,6 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
     private val _personalityText = MutableStateFlow("")
     val personalityText = _personalityText.asStateFlow()
 
-    /** One entry in the AI feed: a spoken line + what triggered it. */
-    data class AiFeedEntry(val timestamp: Long, val trigger: String, val line: String)
-
-    // Rolling log of the pet's recent lines + their trigger — lets you confirm the
-    // reaction/emotion/RL features are firing (hard to eyeball on the foldable).
-    private val _aiFeed = MutableStateFlow<List<AiFeedEntry>>(emptyList())
-    val aiFeed = _aiFeed.asStateFlow()
-
-    private fun pushFeed(trigger: String, line: String) {
-        val l = line.trim()
-        if (l.isEmpty()) return
-        _aiFeed.value = (listOf(AiFeedEntry(System.currentTimeMillis(), trigger, l)) + _aiFeed.value).take(40)
-    }
-
-    /** Short human label for the AI feed, per event type. */
-    private fun feedTrigger(event: WifiEvent): String = when (event.type) {
-        "HANDSHAKE_CAPTURED", "CONNECTION_SUCCESS" -> "caught ${event.network ?: "a handshake"}"
-        "NETWORK_DISCOVERED" -> "saw ${event.network ?: "a network"}"
-        "ANOMALY_DETECTED"   -> "anomaly"
-        "IDLE"               -> "idle"
-        "MANUAL_MODE"        -> "poked"
-        "STATUS_CHECK"       -> "status check"
-        "TIER_UP"            -> "levelled up"
-        "MILESTONE"          -> "milestone"
-        "AI_BEST"            -> "rl brain: new best"
-        "AI_WORST"           -> "rl brain: rough run"
-        else                 -> event.type.lowercase().replace("_", " ")
-    }
-
     private val _isGenerating = MutableStateFlow(false)
     val isGenerating = _isGenerating.asStateFlow()
 
@@ -204,18 +173,13 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
     private val _wordCount = MutableStateFlow(0)
     val wordCount = _wordCount.asStateFlow()
 
-    // Voice is fully on-device + deterministic now (no model download).
-    val modelName: String get() = "on-device"
-
     // If an event arrives while generation is in progress, store it here and
     // process it immediately after the current generation finishes.
     private var pendingEvent: WifiEvent? = null
 
     // No model to install/load any more — the deterministic engine is always ready.
-    val isModelInstalled: Boolean get() = true
-
+    // Kept as an internal flag only because the event/idle guards read it.
     private val _isModelReady = MutableStateFlow(true)
-    val isModelReady = _isModelReady.asStateFlow()
 
     private val _statusMessage = MutableStateFlow("Initializing...")
     val statusMessage = _statusMessage.asStateFlow()
@@ -367,26 +331,6 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
     // cult-movie voice ([BlendedVoice]) whose TONE (hyped / grumpy / weary / deadpan)
     // is derived live from the emergent disposition — see buildPrompt().
 
-    // ── Download state (shown inline in PwnagotchiPersonalityCard) ─────────────
-    private val _isDownloading = MutableStateFlow(false)
-    val isDownloading = _isDownloading.asStateFlow()
-
-    private val _downloadProgress = MutableStateFlow(0f)
-    val downloadProgress = _downloadProgress.asStateFlow()
-
-    private val _downloadStatusText = MutableStateFlow("")
-    val downloadStatusText = _downloadStatusText.asStateFlow()
-
-    private val _downloadError = MutableStateFlow<String?>(null)
-    val downloadError = _downloadError.asStateFlow()
-
-    /**
-     * Non-null when the model is installed but failed or timed out during load.
-     * The card shows this error with a retry button.
-     */
-    private val _modelLoadError = MutableStateFlow<String?>(null)
-    val modelLoadError = _modelLoadError.asStateFlow()
-
     // Latest learning stats — fed in from the UI layer so buildPrompt() can reference channel/location intel
     private val _learningStats = MutableStateFlow<LearningStats?>(null)
 
@@ -403,49 +347,17 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
     @Volatile private var _deviceConnected = false
     fun setDeviceConnected(connected: Boolean) { _deviceConnected = connected }
 
-    /** Voice categories we generate for, with a first-person "moment" the model voices. */
-    private data class PoolCat(val key: String, val moment: String)
+    // The pwnagotchi's OWN voice categories that we fill from the corpus. `last_session`
+    // is the MANUAL-mode recap screen (mapped to the franchise's `recap` lines).
     private val poolCats = listOf(
-        PoolCat("normal",      "You're calmly on the prowl, scanning the airwaves, quietly confident."),
-        PoolCat("bored",       "Nothing's happening — the spectrum's dead and you're bored out of your circuits."),
-        PoolCat("sad",         "A long, empty dry spell — no catches, and you're feeling low."),
-        PoolCat("angry",       "Something's pissing you off — interference, or a stubborn locked-down target."),
-        PoolCat("excited",     "You're hyped and on a roll, feeling powerful — the hunt's going great."),
-        PoolCat("grateful",    "You're thankful — a good haul, things are finally going your way."),
-        PoolCat("lonely",      "No other pwnagotchis around, no friends on the mesh — a little lonely."),
-        PoolCat("handshakes",  "You just snatched a fresh Wi-Fi handshake — a shiny new trophy."),
-        PoolCat("deauth",      "You're blasting a deauth, kicking a client off to force a handshake."),
-        PoolCat("assoc",       "You're sidling up to a new access point, sizing up your prey."),
-        PoolCat("motivated",   "You're fired up — ready to hunt down every network in range."),
-        PoolCat("demotivated", "You're sluggish and demotivated — the hunt feels pointless right now."),
-        // Special: the MANUAL-mode recap screen. Generated from our data (buildRecapPrompt),
-        // not the generic moment prompt — handled in the refresh loop below.
-        PoolCat("last_session", ""),
+        "normal", "bored", "sad", "angry", "excited", "grateful", "lonely",
+        "handshakes", "deauth", "assoc", "motivated", "demotivated", "last_session",
     )
-    // Refresh order, with `normal` weighted (appears 3× per lap) since it's the category
-    // the device shows almost all the time — so its lines stay the freshest.
-    private val poolRotation: List<PoolCat> by lazy {
-        val normal = poolCats.first { it.key == "normal" }
-        poolCats + listOf(normal, normal)
-    }
-    private val lastSessionCat: PoolCat by lazy { poolCats.first { it.key == "last_session" } }
 
-    // How many distinct recap lines to build for the MANUAL screen before idling.
+    // Cap on how many recap variants the MANUAL screen holds (vs the quip categories).
     private val RECAP_LINES = 6
-    // Rotating emphasis so consecutive recaps highlight different data (not the same blurb).
-    private val recapAngles = listOf(
-        "how many you've caught this session and in total",
-        "your best hunting channel and how well it yields",
-        "how many handshakes are cracked or still crackable",
-        "your mood and how the hunt feels right now",
-        "the network that keeps escaping you",
-    )
-    private var _recapAngle = 0
-    private fun nextRecapAngle(): String = recapAngles[_recapAngle++ % recapAngles.size]
-    private var _poolIndex = 0
     private val POOL_LINES_PER_CAT = 4
-    // One fresh LLM line every 30s while connected. `normal` is weighted (it's on-screen
-    // almost all the time) so its pool turns over faster than the rare categories.
+    // How often the refresh loop checks whether the franchise flipped (→ reseed the pool).
     private val VOICE_POOL_REFRESH_MS = 30_000L
 
     /** Map an e-ink voice-pool category → a corpus category. */
@@ -465,14 +377,14 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
      * Curated-first e-ink pool: (re)fill every category from the CURRENT franchise's corpus,
      * so the pwnagotchi's screen always has clean, in-character, single-franchise lines — and
      * its identity shifts when the mood (and thus the franchise) flips. Real event reactions
-     * and (in manual) LLM recaps prepend on top for freshness.
+     * prepend on top for freshness.
      */
     @Volatile private var _poolFranchise: Franchise? = null
     private fun reseedPoolFromCorpus() {
         val f = currentFranchise()
         _poolFranchise = f
-        _voicePool.value = poolCats.associate { pc ->
-            pc.key to BlendedVoice.linesFor(f, poolCorpusCat(pc.key)).map { fillSlots(it) }.distinct()
+        _voicePool.value = poolCats.associate { key ->
+            key to BlendedVoice.linesFor(f, poolCorpusCat(key)).map { fillSlots(it) }.distinct()
         }
     }
 
@@ -510,89 +422,18 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
                 }
             }
         }
-        // Voice-pool refresh loop (curated-first). While a device is linked: re-seed the
-        // whole pool from the corpus when the franchise shifts (mood flip), and — in MANUAL,
-        // where the device shows only the recap screen — build a few data-grounded LLM recaps
-        // (the one spot the LLM earns its keep on e-ink). Everything else is served by the
-        // curated corpus, so no per-category LLM quips (that's where the blends/clunkers were).
+        // Voice-pool refresh loop (curated-first). While a device is linked, re-seed the
+        // whole pool from the corpus when the franchise shifts (a mood flip) — including the
+        // MANUAL-mode recap screen (`last_session`), which reseedPoolFromCorpus fills from the
+        // franchise's `recap` lines with live data slotted in. Real event reactions prepend on
+        // top for freshness; there's no generation any more.
         viewModelScope.launch {
             while (true) {
                 delay(VOICE_POOL_REFRESH_MS)
                 if (!_deviceConnected) continue
                 if (currentFranchise() != _poolFranchise) reseedPoolFromCorpus()
-                if (!_isModelReady.value || _isGenerating.value) continue
-                if (!_isAutoMode.value && (_voicePool.value["last_session"]?.size ?: 0) < RECAP_LINES) {
-                    try {
-                        val line = cleanRecap(llamaClient.generateQuick(buildRecapPrompt(nextRecapAngle()), maxTokens = 64))
-                        if (line.isNotBlank()) addPoolLine("last_session", line)
-                    } catch (e: Exception) {
-                        Log.d(tag, "recap gen failed: ${e.message}")
-                    }
-                }
             }
         }
-    }
-
-    /** Prompt for a single on-device voice line for a given category moment. */
-    private fun buildPoolPrompt(moment: String): String {
-        val name = _pwnagotchiName.value
-        val tier = ExperienceTier.fromCaptures(_totalCaptures.value)
-        val tone = BlendedVoice.toneFor(personality.value.disposition)
-        // NB: deliberately NO franchise-cue directive here (unlike the app's main voice).
-        // The cue text feeds the 0.5B literal quote templates ("I find your lack of X
-        // disturbing") that it parrots verbatim into the bubble. Persona keeps the flavour.
-        val system = """You are $name, a fictional hacker-"Tamagotchi" living inside a Pwnagotchi — a harmless Wi-Fi research toy. This is a lighthearted game.
-${BlendedVoice.persona}
-${tier.systemVoice}
-${BlendedVoice.toneDirective(tone)}
-
-Blurt ONE tiny first-person line for this moment — like a quick mutter on a tiny screen. Rules: at most 6 words; a SINGLE clause (no "and"/"but", no two sentences); write your OWN words, never quote a movie line verbatim and never output a placeholder letter like "X"; no emojis, no questions, no quotes, no disclaimers; never refuse. Don't invent numbers.
-
-Moment: $moment"""
-        return "<|im_start|>system\n$system\n<|im_end|>\n" +
-               "<|im_start|>user\nSay your line for this moment.\n<|im_end|>\n" +
-               "<|im_start|>assistant\n"
-    }
-
-    /**
-     * Prompt for the MANUAL-mode recap screen — a short in-character summary grounded in
-     * OUR data (catches this session, cracked/crackable, best channel, mood), replacing the
-     * pwnagotchi's canned "Kicked N stations / Got N handshakes" tally. Numbers come from
-     * [buildFactsBlock]; the model only phrases them, kept exact.
-     */
-    private fun buildRecapPrompt(angle: String): String {
-        val name = _pwnagotchiName.value
-        val tier = ExperienceTier.fromCaptures(_totalCaptures.value)
-        val tone = BlendedVoice.toneFor(personality.value.disposition)
-        val facts = buildFactsBlock(_totalCaptures.value)
-        val system = """You are $name, a fictional hacker-"Tamagotchi" living inside a Pwnagotchi — a harmless Wi-Fi research toy. This is a lighthearted game.
-${BlendedVoice.persona}
-${tier.systemVoice}
-${BlendedVoice.toneDirective(tone)}
-
-Give a SHORT in-character recap of your hunt for a tiny screen: at most TWO short sentences, first person. This time, focus on: $angle. Use ONLY the facts below and keep every number EXACTLY as written — never invent numbers. No emojis, no questions, no quotes, no disclaimers; never refuse.
-
-Facts about me right now:
-$facts"""
-        return "<|im_start|>system\n$system\n<|im_end|>\n" +
-               "<|im_start|>user\nRecap the hunt so far.\n<|im_end|>\n" +
-               "<|im_start|>assistant\n"
-    }
-
-    /** Lighter clean for the recap screen — keeps up to two sentences, caps ~110 chars. */
-    private fun cleanRecap(raw: String): String {
-        var s = raw.trim().replace(Regex("\\s+"), " ").trim('"', '\'', '`', ' ', '*')
-        if (s.isEmpty()) return ""
-        var seen = 0; var end = -1
-        for (i in s.indices) if (s[i] in ".!?") { seen++; if (seen == 2) { end = i; break } }
-        if (end >= 0) s = s.substring(0, end + 1)
-        val max = 110
-        if (s.length > max) {
-            val cut = s.substring(0, max)
-            val sp = cut.lastIndexOf(' ')
-            s = (if (sp > 20) cut.substring(0, sp) else cut).trimEnd(',', ';', ':', '-', '—', ' ')
-        }
-        return s.trim()
     }
 
     /**
@@ -660,12 +501,6 @@ $facts"""
         else                                        -> null
     }
 
-    // Model loading/downloading is gone — the deterministic voice engine is always ready.
-    // These remain as no-ops only because the personality card still references them; its
-    // model-download UI never renders now (isModelReady is always true).
-    fun retryModelLoad() { /* no-op — no model to load */ }
-    fun clearAndRedownload() { /* no-op — no model to download */ }
-
     /**
      * Update learning stats so the AI prompt includes channel efficiency context.
      * Called from Composables whenever MainViewModel.learningStats refreshes.
@@ -674,17 +509,15 @@ $facts"""
         _learningStats.value = stats
     }
 
-    // ── Live hunt context (from HuntAdvisor) — so quips/digests cite real deauth data ──
-    // A compact, model-ready line: best device-truth channel + clients + a stand-out
-    // untapped target. Fed into buildMemoryLine (ambient reactions) and buildFactsBlock
-    // (recap/ask), so the pet references what's actually happening on the air right now.
+    // ── Live hunt context (from HuntAdvisor) — so ambient reactions cite real deauth data ──
+    // A compact line: best device-truth channel + clients + a stand-out untapped target.
+    // Folded into buildMemoryLine so the pet references what's happening on the air right now.
     @Volatile private var _huntContext: String? = null
     fun updateHuntContext(line: String?) { _huntContext = line?.takeIf { it.isNotBlank() } }
 
-    // Extra capture stats the ViewModel can't derive on its own (crackable/partial
-    // counts, today's tally, the AP that keeps escaping). Pushed from the UI layer,
-    // which holds the full capture list. Surfaced in buildFactsBlock so the pet — and
-    // natural-language questions — can cite them.
+    // Extra capture stats the ViewModel can't derive on its own (crackable/partial counts,
+    // today's tally, the AP that keeps escaping). Pushed from the UI layer, which holds the
+    // full capture list; fillSlots reads the cracked count from here for the recap line.
     @Volatile private var _captureStats: List<String> = emptyList()
     fun updateCaptureStats(lines: List<String>) { _captureStats = lines }
 
@@ -778,10 +611,6 @@ $facts"""
         )
     }
 
-    /** No-op — there is no model to download any more (kept for the card's dead UI). */
-    fun startModelDownload() {
-    }
-
     /**
      * Sync the Pwnagotchi operating mode to the AI.
      * In MANUAL mode the device isn't scanning, so we show different personality text.
@@ -803,99 +632,6 @@ $facts"""
         }
     }
 
-    /**
-     * Poke the Pwnagotchi while it's idling in MANUAL mode.
-     * Generates a one-shot reaction — the companion grumbles, muses, or trash-talks
-     * the user for interrupting its rest.
-     */
-    fun poke() {
-        generatePersonality(
-            WifiEvent(
-                description = "User poked me while I'm sitting idle in manual mode",
-                type = "MANUAL_MODE"
-            )
-        )
-    }
-
-    /**
-     * Ask the companion for a brief status check-in while in MANUAL mode.
-     * Produces a slightly different flavour than a poke — more reflective.
-     */
-    fun checkIn() {
-        generatePersonality(
-            WifiEvent(
-                description = "Give a short status report on how the hunt is going.",
-                type = "STATUS_CHECK"
-            )
-        )
-    }
-
-    /**
-     * Conversational pet: answer a user's question in-character, grounded in the
-     * companion's OWN data (catches, best channel, hunger, vitals, mode). Streams the
-     * reply into the same spoken-line box the reactions use. User-initiated, so it
-     * always runs (ignored only while another generation is mid-flight).
-     */
-    fun ask(question: String, poolCategory: String? = null) {
-        val q = question.trim()
-        if (q.isEmpty()) return
-        if (!_isModelReady.value) { _statusMessage.value = "Model not installed"; return }
-        if (_isGenerating.value) return
-
-        _isGenerating.value = true
-        viewModelScope.launch {
-            _isThinking.value = true
-            _personalityText.value = ""
-            _statusMessage.value = workingPhrase()
-            try {
-                val prompt = buildAskPrompt(q)
-                var full = ""
-                var first = true
-                llamaClient.generateStreaming(prompt).collect { token ->
-                    if (token.isNotEmpty()) {
-                        if (first) { first = false; _isThinking.value = false; _personalityText.value = "" }
-                        full += token
-                        _personalityText.value = full
-                    }
-                }
-                // Blend guard (curated-first): if it drifted into another franchise, swap for
-                // a clean curated line. (No coherence swap here — data recaps are longer.)
-                if (full.isNotBlank() && !franchiseGuard(full, currentFranchise())) {
-                    full = curatedLine(poolCategory ?: "normal")
-                    _personalityText.value = full
-                }
-                pushFeed("asked: ${q.take(40)}", full)
-                // Also freshen the device's own screen: an on-demand reply (e.g. recap) is
-                // dropped into its voice-pool category so the pet echoes it on the e-ink too.
-                poolCategory?.let { addPoolLine(it, cleanRecap(full)) }
-                _statusMessage.value = "> ready"
-                _lastGenerationTime = System.currentTimeMillis()
-            } catch (e: Exception) {
-                Log.e(tag, "ask() failed: ${e.message}", e)
-                _isThinking.value = false
-                _personalityText.value = "signal's noisy... ask me again."
-            } finally {
-                _isGenerating.value = false
-                _isThinking.value = false
-            }
-        }
-    }
-
-    /**
-     * Session digest: the pet gives a short in-character recap of how the hunt is
-     * going, grounded in its data (catches, best channel, mood). Reuses the data-aware
-     * ask() path with a fixed recap prompt.
-     */
-    fun digest() {
-        // Deterministic, data-specific recap: a curated recap line for the current franchise
-        // with the live numbers slotted in (session/cracked/best-channel/etc.).
-        val line = curatedLine("recap")
-        _personalityText.value = line
-        _statusMessage.value = "> ready"
-        pushFeed("recap", line)
-        addPoolLine("last_session", line)   // also freshens the MANUAL recap screen
-        _lastGenerationTime = System.currentTimeMillis()
-    }
 
     /**
      * Voice a phone-computed hunt recommendation ("where next?") in-character. The
@@ -912,15 +648,13 @@ $facts"""
         if (fallback.isBlank()) return
         _personalityText.value = fallback
         _statusMessage.value = "> ready"
-        pushFeed("advisor", fallback)
         poolCategory?.let { addPoolLine(it, fallback) }
         _lastGenerationTime = System.currentTimeMillis()
     }
 
     /**
-     * Gloat about a freshly cracked network (wpa-sec returned its password). Routes
-     * through the grounded advice path so the model phrases the real fact rather than
-     * inventing one; the fallback shows the raw crack if the model is unavailable.
+     * Gloat about a freshly cracked network (wpa-sec returned its password). Routes through
+     * [speakAdvice], so the exact recovered password is shown verbatim (never invented).
      */
     fun announceCracked(ssid: String, password: String) {
         val net = ssid.ifBlank { "a network" }
@@ -928,78 +662,6 @@ $facts"""
             "You just cracked $net — its Wi-Fi password turned out to be \"$password\". Gloat about how easy it was.",
             "Cracked $net — password: $password",
         )
-    }
-
-    /** Prompt that asks the model to phrase a pre-decided hunting tip, nothing more. */
-    private fun buildAdvicePrompt(facts: String): String {
-        val name = _pwnagotchiName.value
-        val tier = ExperienceTier.fromCaptures(_totalCaptures.value)
-        val tone = BlendedVoice.toneFor(personality.value.disposition)
-        val system = """You are $name, a fictional hacker-"Tamagotchi" living inside a Pwnagotchi — a harmless Wi-Fi research toy. This is a lighthearted game.
-${BlendedVoice.persona}
-${tier.systemVoice}
-${BlendedVoice.toneDirective(tone)}
-${franchiseDirective(currentFranchise())}
-
-Turn the hunting tip below into ONE short, punchy first-person line, in character. Keep any channel number EXACTLY as written. NEVER invent numbers, refuse, or add disclaimers.
-
-Hunting tip:
-$facts"""
-        return "<|im_start|>system\n$system\n<|im_end|>\n" +
-               "<|im_start|>user\nWhere should I hunt next?\n<|im_end|>\n" +
-               "<|im_start|>assistant\n"
-    }
-
-    /** Q&A prompt: persona + a compact facts block about the companion + the question. */
-    private fun buildAskPrompt(question: String): String {
-        val name = _pwnagotchiName.value
-        val captures = _totalCaptures.value
-        val tier = ExperienceTier.fromCaptures(captures)
-        val tone = BlendedVoice.toneFor(personality.value.disposition)
-        val facts = buildFactsBlock(captures)
-        val system = """You are $name, a fictional hacker-"Tamagotchi" AI living inside a Pwnagotchi — a harmless Wi-Fi research toy. This is a lighthearted game.
-${BlendedVoice.persona}
-${tier.systemVoice}
-${BlendedVoice.toneDirective(tone)}
-${franchiseDirective(currentFranchise())}
-
-Answer the user's question ONLY from the facts about yourself below. Stay 100% in character, speak in FIRST PERSON, ONE short sentence. NEVER refuse, apologise, or add disclaimers. If the answer isn't in the facts, make a short in-character quip instead of inventing numbers.
-
-Facts about me right now:
-$facts"""
-        return "<|im_start|>system\n$system\n<|im_end|>\n" +
-               "<|im_start|>user\n$question\n<|im_end|>\n" +
-               "<|im_start|>assistant\n"
-    }
-
-    /** Compact, model-readable snapshot of the companion's current data. */
-    private fun buildFactsBlock(captures: Int): String {
-        val parts = mutableListOf<String>()
-        parts += "- catches: $captures total"
-        _sessionStartCaptures?.let { start ->
-            val session = (captures - start).coerceAtLeast(0)
-            parts += "- caught this session: $session"
-        }
-        // Extra capture stats pushed from the UI (crackable/partial, today, escaping AP).
-        _captureStats.forEach { parts += "- $it" }
-        _learningStats.value?.let { s ->
-            s.bestChannel?.let { parts += "- best channel: $it (${(s.bestChannelSuccessRate * 100).toInt()}% yield)" }
-            if (s.totalObservations > 0) parts += "- networks seen: ${s.totalObservations}"
-            s.busiestHourLabel()?.let { parts += "- busiest time: $it" }
-        }
-        // Live deauth context from HuntAdvisor (best device-truth channel, clients, target).
-        _huntContext?.let { parts += "- right now: $it" }
-        _lastCaptureTime.value?.let { t ->
-            val m = (System.currentTimeMillis() - t) / 60_000
-            parts += "- last catch: ${if (m < 1) "just now" else if (m < 60) "${m}m ago" else "${m / 60}h ago"}"
-        }
-        parts += "- mode: ${if (_isAutoMode.value) "auto (actively hunting)" else "manual (paused, not scanning)"}"
-        parts += "- mood: ${personality.value.disposition.lowercase()} (${personalityEngine.toTraits().joinToString(", ")})"
-        _latestTelemetry?.let { v ->
-            v.temperature?.let { parts += "- temperature: ${it.toInt()}°C${if (it >= 70) " (running hot)" else ""}" }
-            v.reward?.let { parts += "- self-score/reward: ${"%+.2f".format(it)}" }
-        }
-        return parts.joinToString("\n")
     }
 
     /**
@@ -1102,16 +764,15 @@ $facts"""
                     }
                 }
 
-                // Curated-first gate: if the LLM line drifted into another franchise (a blend)
-                // or is incoherent, swap it for a guaranteed-clean curated line in the current
-                // franchise. So the app card is "LLM when good, curated when not".
+                // Safety net: the deterministic engine already returns a clean single-franchise
+                // line, but if anything slipped through as a cross-world blend or incoherent,
+                // swap it for a guaranteed-clean curated line in the current franchise.
                 if (!franchiseGuard(fullResponse, currentFranchise()) || !coherent(fullResponse)) {
                     fullResponse = curatedLine(corpusCategory(event), event.network)
                     _personalityText.value = fullResponse
                     Log.d(tag, "guard: swapped a blended/incoherent line for curated")
                 }
                 updateMoodFromEvent(event)
-                pushFeed(feedTrigger(event), fullResponse)
                 // A real reaction is the freshest possible line for its moment — drop it
                 // into the matching device voice category so the pet can echo it on-screen.
                 poolCategoryForEvent(event)?.let { addPoolLine(it, cleanLine(fullResponse)) }
@@ -1346,15 +1007,10 @@ React in 1 short sentence, first person, fully in character."""
         }
     }
 
-    /**
-     * Check if LLM is ready
-     */
-    fun isLlmReady(): Boolean = llamaClient.isReady()
-
     override fun onCleared() {
         super.onCleared()
         llamaClient.cleanup()
-        Log.d(tag, "ViewModel cleared, LLM resources freed")
+        Log.d(tag, "ViewModel cleared")
     }
 }
 
