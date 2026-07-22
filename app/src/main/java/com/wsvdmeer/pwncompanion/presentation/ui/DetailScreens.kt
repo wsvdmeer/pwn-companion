@@ -86,7 +86,7 @@ fun LogDetailScreen(viewModel: MainViewModel, paddingValues: PaddingValues, onBa
                 }
                 Text(
                     line, color = c, fontSize = 11.sp, lineHeight = 17.sp,
-                    fontFamily = TerminalMono, maxLines = 1,
+                    fontFamily = TerminalMono,
                     modifier = Modifier.padding(vertical = 1.dp)
                 )
             }

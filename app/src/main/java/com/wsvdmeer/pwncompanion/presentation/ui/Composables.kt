@@ -27,6 +27,9 @@ import androidx.core.content.ContextCompat
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
+import kotlinx.coroutines.delay
 import com.wsvdmeer.pwncompanion.presentation.theme.TerminalBoxShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.LocationOn
@@ -422,6 +425,19 @@ fun MainContentArea(
         if (currentImageData != null) {
             item {
                 RawDeviceImage(currentImageData)
+                // Caption the mirrored e-ink with the film-world the current quote is from
+                // (the persistent franchise drives every line on screen right now).
+                val voiceWorld by pwnagotchiVM.franchiseLabel.collectAsState()
+                if (voiceWorld.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Text(
+                        "‹ ${voiceWorld.lowercase()} ›",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp, lineHeight = 14.sp,
+                        maxLines = 1, textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 Spacer(modifier = Modifier.height(8.dp))
             }
         }
@@ -442,6 +458,15 @@ fun MainContentArea(
         // The pet's voice now lives on the pwnagotchi's own e-ink screen (voice pool), so the
         // phone no longer shows a speech/pet card — it's a pure console. The ViewModel is
         // still fed (mood/telemetry/captures/advice below) because that drives the e-ink voice.
+
+        // ── standby — when no pwnagotchi is linked, show a "waiting" panel so the console
+        // reads as idle-and-alive rather than a screen of empty sections. ──
+        if (connectedDevices.isEmpty()) {
+            item {
+                ConsoleStandbyBlock(networkingArmed = networkingArmed)
+                ConsoleRule()
+            }
+        }
 
         // ── alerts — only when there's actually something to warn about (a mission alert
         // or an untapped target to chase); otherwise the section is hidden entirely. ──
@@ -466,18 +491,43 @@ fun MainContentArea(
         if (connectedDevices.isNotEmpty()) {
             item {
                 val seen = learningStats?.totalObservations ?: 0
-                Row(
+                // Top 3 channels by activity (matches the detail's "channels (by activity)"),
+                // shown inline so the best spots are readable without opening the detail.
+                val top3 = learningStats?.channels
+                    ?.filter { it.observationCount > 0 }
+                    ?.sortedByDescending { it.observationCount }
+                    ?.take(3)
+                    ?: emptyList()
+                Column(
                     modifier = Modifier.fillMaxWidth().clickable {
                         mainViewModel.openDetail(com.wsvdmeer.pwncompanion.presentation.DetailScreen.LEARNING)
-                    },
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
+                    }
                 ) {
-                    ConsoleLabel("[ history ]")
-                    Text(
-                        if (seen > 0) "$seen networks seen · details ›" else "details ›",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp,
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        ConsoleLabel("[ history ]")
+                        Text(
+                            if (seen > 0) "$seen networks seen · details ›" else "details ›",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp,
+                        )
+                    }
+                    if (top3.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(3.dp))
+                        // Bar = relative activity (descending, like the detail); value = yield %.
+                        // Same gauge style as [ vitals ].
+                        val maxObs = (learningStats?.channels?.maxOfOrNull { it.observationCount } ?: 1).coerceAtLeast(1)
+                        top3.forEach { ch ->
+                            ConsoleBarRow(
+                                "ch${ch.channel}",
+                                ch.observationCount.toFloat() / maxObs,
+                                "${(ch.successRate * 100).roundToInt()}%",
+                                if (ch.isBest) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    }
                 }
                 ConsoleRule()
             }
@@ -493,8 +543,9 @@ fun MainContentArea(
             }
         }
 
-        // ── gps details ──────────────────────────────────────────
-        if (gpsData != null && gpsData.isValid()) {
+        // ── gps details — only while linked (not needed on the idle/standby screen);
+        // shown even without a fix yet, as 'acquiring…', so it never vanishes mid-session. ──
+        if (connectedDevices.isNotEmpty()) {
             item {
                 ConsoleGpsBlock(gpsData)
                 ConsoleRule()
@@ -720,20 +771,67 @@ private fun ConsoleSteeringBlock(
 }
 
 /**
+ * Standby panel — shown when no pwnagotchi is linked. A calm "waiting to hunt" screen (an
+ * idle face + a slowly-rotating in-character line + what to do) so the disconnected console
+ * reads as idle-and-alive rather than a page of empty sections.
+ */
+@Composable
+private fun ConsoleStandbyBlock(networkingArmed: Boolean) {
+    val primary = MaterialTheme.colorScheme.primary
+    val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    val tertiary = MaterialTheme.colorScheme.tertiary
+
+    val quips = listOf(
+        "the spectrum's quiet… for now.",
+        "sharpening my fangs.",
+        "no signal is safe.",
+        "waiting to hunt.",
+        "dreaming of handshakes.",
+    )
+    var qi by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) { delay(4500); qi = (qi + 1) % quips.size }
+    }
+
+    Column {
+        ConsoleLabel("[ standby ]")
+        Spacer(modifier = Modifier.height(6.dp))
+        Text("(⌐■_■)  zzz", color = primary, fontSize = 18.sp, lineHeight = 22.sp)
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(quips[qi], color = dim, fontSize = 12.sp, lineHeight = 18.sp)
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            if (networkingArmed) "○ waiting for the Bluetooth tether…" else "○ no pwnagotchi linked",
+            color = tertiary, fontSize = 12.sp, lineHeight = 18.sp,
+        )
+        Text(
+            "› enable Bluetooth tethering + pair your pwnagotchi to link up",
+            color = dim, fontSize = 11.sp, lineHeight = 16.sp,
+        )
+    }
+}
+
+/**
  * Dedicated GPS details block — the place to read the precise fix. The Pwnagotchi's
  * own screen now shows only a compact indicator + age; the numbers live here.
  */
 @Composable
-private fun ConsoleGpsBlock(gps: com.wsvdmeer.pwncompanion.models.GpsData) {
+private fun ConsoleGpsBlock(gps: com.wsvdmeer.pwncompanion.models.GpsData?) {
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
-    val ageS = if (gps.timestamp > 0) ((System.currentTimeMillis() - gps.timestamp) / 1000) else -1
     Column {
         ConsoleLabel("[ gps ]")
         Spacer(modifier = Modifier.height(4.dp))
-        // lat+lon on one line, fix+accuracy on another (alt dropped as rarely useful).
-        ConsoleRow("pos", "%.5f, %.5f".format(gps.latitude, gps.longitude), MaterialTheme.colorScheme.onSurface)
-        val fix = if (ageS < 0) "—" else if (ageS < 2) "live" else "${ageS}s ago"
-        ConsoleRow("fix", "%s · ±%.0f m".format(fix, gps.accuracy), dim)
+        // Always shown so the section never vanishes: until the phone has a real fix
+        // (lat/lon != 0) we report "acquiring…" instead of hiding the whole block.
+        if (gps == null || !gps.isValid()) {
+            ConsoleRow("fix", "○ acquiring…", dim)
+        } else {
+            val ageS = if (gps.timestamp > 0) ((System.currentTimeMillis() - gps.timestamp) / 1000) else -1
+            // lat+lon on one line, fix+accuracy on another (alt dropped as rarely useful).
+            ConsoleRow("pos", "%.5f, %.5f".format(gps.latitude, gps.longitude), MaterialTheme.colorScheme.onSurface)
+            val fix = if (ageS < 0) "—" else if (ageS < 2) "live" else "${ageS}s ago"
+            ConsoleRow("fix", "%s · ±%.0f m".format(fix, gps.accuracy), dim)
+        }
     }
 }
 
@@ -835,33 +933,40 @@ private fun ConsoleCapturesBlock(
         // When they differ (same AP saved under 2 filenames), show both so it reconciles
         // with the pwnagotchi's own on-screen count.
         val networks = captures.size
-        // Keep the total row short — "mapped" moves to its own row so the line never
-        // overflows when both the network + handshake counts are shown.
-        val totalLabel = if (fileCount != null && fileCount > networks)
-            "$networks networks · $fileCount handshakes"
+        // ── one counts line: networks/handshakes + mapped, folded together ──
+        val caught = if (fileCount != null && fileCount > networks)
+            "$networks nets · $fileCount caught"
         else
-            "$networks handshakes"
-        ConsoleRow("total", totalLabel, primary)
-        if (geo > 0) ConsoleRow("mapped", "$geo geolocated", dim)
+            "$networks caught"
+        ConsoleRow("total", caught + if (geo > 0) " · $geo mapped" else "", primary)
+
+        // ── one crack line: result + wpa-sec state, shown only when it says something.
+        // (partial grabs + the verbose "wpa-sec online" live in the detail — this keeps
+        // the console from stacking separate crackable/cracking rows.) ──
         val crackable = captures.count { it.isCrackable }
-        val partial = captures.count { it.isPartial }
         val cracked = captures.count { it.isCracked }
-        if (cracked > 0) {
-            ConsoleRow("cracked", "$cracked pwned · $crackable crackable", primary)
-        } else if (crackable > 0 || partial > 0) {
-            ConsoleRow("crackable", "$crackable real" + if (partial > 0) " · $partial partial" else "",
-                if (partial > crackable) MaterialTheme.colorScheme.tertiary else primary)
+        val crackText = when {
+            cracked > 0   -> "$cracked cracked · $crackable crackable"
+            crackable > 0 -> "$crackable crackable"
+            else          -> null
         }
-        // wpa-sec cracking status — whether captures are being sent off to crack, and
-        // whether the wpa-sec service itself is reachable (it goes down sometimes).
-        when (wpaSecEnabled) {
-            true -> when (wpaSecOnline) {
-                false -> ConsoleRow("cracking", "wpa-sec on · service OFFLINE", MaterialTheme.colorScheme.error)
-                true  -> ConsoleRow("cracking", "wpa-sec on · online", primary)
-                else  -> ConsoleRow("cracking", "wpa-sec on", primary)
-            }
-            false -> ConsoleRow("cracking", "off — enable wpa-sec to crack", MaterialTheme.colorScheme.tertiary)
-            else  -> {}
+        val offline = wpaSecEnabled == true && wpaSecOnline == false
+        val wpaNote = when {
+            offline                -> "wpa-sec offline"
+            wpaSecEnabled == false -> "wpa-sec off"
+            else                   -> null
+        }
+        val crackLine = listOfNotNull(crackText, wpaNote).joinToString(" · ")
+        if (crackLine.isNotEmpty()) {
+            ConsoleRow(
+                "crack",
+                crackLine,
+                when {
+                    offline           -> MaterialTheme.colorScheme.error
+                    crackText != null -> primary
+                    else              -> MaterialTheme.colorScheme.tertiary
+                },
+            )
         }
         Spacer(modifier = Modifier.height(2.dp))
         // Recent captures, newest first. ⌖ marks ones with a GPS fix.
@@ -1160,7 +1265,7 @@ fun EventFeedCard(lines: List<String>, onOpen: () -> Unit = {}) {
                 line.contains("[*]") -> MaterialTheme.colorScheme.tertiary
                 else -> MaterialTheme.colorScheme.onSurfaceVariant
             }
-            Text(line, color = c, fontSize = 11.sp, lineHeight = 16.sp, maxLines = 1)
+            Text(line, color = c, fontSize = 11.sp, lineHeight = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }

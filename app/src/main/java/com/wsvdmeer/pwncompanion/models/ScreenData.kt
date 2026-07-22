@@ -56,6 +56,11 @@ data class ScreenData(
     @SerialName("altitude")
     val altitude: Double? = null,
 
+    // Hardware speed (m/s) from the phone's own Location, when reported — used for motion
+    // detection (steering). Null when the chipset didn't report a speed.
+    @SerialName("speed")
+    val speed: Float? = null,
+
     @SerialName("tether_interface")
     val tetherInterface: String? = null,
 

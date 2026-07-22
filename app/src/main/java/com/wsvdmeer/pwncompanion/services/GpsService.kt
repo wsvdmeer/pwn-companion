@@ -273,6 +273,9 @@ class GpsService : Service() {
                                 longitude = location.longitude,
                                 accuracy = location.accuracy.toDouble(),
                                 altitude = location.altitude,
+                                // Hardware speed (m/s) when the chipset reports it — the
+                                // reliable motion signal (Doppler); null → app differences positions.
+                                speed = if (location.hasSpeed()) location.speed else null,
                                 timestamp = System.currentTimeMillis()
                             )
                             networkService?.updateLastGpsData(gpsSnapshot)

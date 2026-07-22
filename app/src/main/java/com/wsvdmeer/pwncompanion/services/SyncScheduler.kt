@@ -6,8 +6,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlin.math.ln
-import kotlin.math.sqrt
 
 /**
  * Sync Scheduler - Orchestrates periodic synchronization of strategies and learning data.
@@ -65,14 +63,10 @@ class SyncScheduler(
     private var lastReconTime: Int? = null
 
     // ── Explore/exploit bandit (UCB1) for channel selection ───────────────────
-    // Exploit the productive channels, but keep sampling under-explored ones so we
-    // don't tunnel-vision (a fixed top-N can self-reinforce). `pulls` are DECAYED each
-    // cycle — that's the recency term: old exploitation fades, so a channel that went
-    // cold gets re-explored (WiFi is non-stationary). Higher C = more exploration.
-    private val pulls = HashMap<Int, Double>()
-    private var totalPulls = 0.0
-    private val EXPLORE_C = 0.6
-    private val PULL_DECAY = 0.97   // ~15-20 min exploration half-life at 45s/cycle
+    // Exploit the productive channels, but keep sampling under-explored ones so we don't
+    // tunnel-vision. The algorithm lives in [ChannelBandit] (pure + unit-tested); this holds
+    // one instance so its pull memory persists across cycles.
+    private val bandit = ChannelBandit()
 
     // ── Personality tuner (re-implements jayofelony's removed RL param-tuner) ──
     // Context policy: ap_ttl/sta_ttl/hop set from motion. Feedback hill-climb: min_rssi
@@ -240,21 +234,16 @@ class SyncScheduler(
                 addAll(1..11); addAll(auto.keys); addAll(yieldByCh.keys); addAll(hourly); addAll(nearby); untap?.let { add(it) }
             }.filter { it in 1..165 }
 
-            // UCB1: normalised exploit value + an exploration bonus that's large for
-            // under-sampled channels and shrinks as we sample them. Decaying pulls make
-            // it re-explore over time.
-            val maxExploit = candidates.maxOf { exploit(it) }.coerceAtLeast(1e-6)
-            val logTot = ln(totalPulls + 2.0)
-            fun ucb(ch: Int): Double =
-                exploit(ch) / maxExploit + EXPLORE_C * sqrt(logTot / ((pulls[ch] ?: 0.0) + 1.0))
-
-            val topChannels = candidates.sortedByDescending { ucb(it) }.take(3)
+            // UCB1 (pure, in ChannelBandit): normalised exploit + an exploration bonus that's
+            // large for under-sampled channels and shrinks as we sample them; decaying pulls
+            // make it re-explore over time.
+            val topChannels = bandit.select(candidates, 3) { exploit(it) }
             if (topChannels.isEmpty()) return
 
-            // Update bandit memory: decay everything (recency), then credit the chosen.
-            pulls.replaceAll { _, v -> v * PULL_DECAY }
-            totalPulls *= PULL_DECAY
-            topChannels.forEach { pulls[it] = (pulls[it] ?: 0.0) + 1.0; totalPulls += 1.0 }
+            // Per-cycle trace so behaviour is observable live in AUTO (adb logcat -s SyncScheduler:D):
+            // motion state, candidate count, and the chosen channels with their exploit values.
+            Log.d(tag, "bandit: moving=$moving cand=${candidates.size} → " +
+                topChannels.joinToString(" ") { "ch$it(${"%.2f".format(exploit(it))})" })
 
             val why = buildString {
                 if (hasAuto) append("dev·")
