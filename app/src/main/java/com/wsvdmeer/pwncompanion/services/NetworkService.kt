@@ -793,9 +793,14 @@ class NetworkService(private val context: Context) {
         }
     }
 
+    /** Public hook for the companion service's full-stop, so GPS is torn down through the
+     *  same path that resets [gpsServiceRunning] (a direct stopService would desync the flag
+     *  and block a later restart). */
+    fun stopGpsTracking() = stopGpsService()
+
     /**
      * Stop GPS foreground service.
-     * Used when last Pwnagotchi disconnects to save battery.
+     * Used on full user stop.
      */
     private fun stopGpsService() {
         if (!gpsServiceRunning) {

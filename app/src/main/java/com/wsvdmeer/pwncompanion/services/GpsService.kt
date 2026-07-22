@@ -33,6 +33,10 @@ class GpsService : Service() {
     private var locationListener: LocationListener? = null
     private var networkService: NetworkService? = null
     private var lastLocation: Location? = null  // Store last known location
+    // Desired tracking state: we only poll GPS while a pwnagotchi is connected (battery). The
+    // service stays alive regardless, so we never have to re-start a location foreground service
+    // from the background (Android 12+ blocks that) — we just pause/resume the updates.
+    @Volatile private var shouldTrack = false
     // Share the ONE network foreground notification (id 1000) instead of showing a second
     // GPS notification. Both foreground services hold the same id, so the shade shows a
     // single "live pet" notice; NetworkService keeps its content fresh.
@@ -116,12 +120,25 @@ class GpsService : Service() {
                     networkService = NetworkServiceSingleton.getInstance(this@GpsService)
                     Log.i(tag, "✓ Got NetworkService singleton instance for GPS broadcasting")
                 }
+                // Poll GPS only while a device is connected — resume updates when the link
+                // comes up, pause them when the last device drops (saves battery; before, GPS
+                // polled every second from launch forever). This collect suspends for the
+                // service's lifetime.
+                networkService?.connectedDeviceCount?.collect { count ->
+                    if (count > 0) {
+                        if (!shouldTrack) { shouldTrack = true; resumeLocationUpdates() }
+                    } else {
+                        if (shouldTrack) { shouldTrack = false; pauseLocationUpdates() }
+                    }
+                }
             } catch (e: Exception) {
-                Log.e(tag, "Error getting NetworkService singleton: ${e.message}")
+                Log.e(tag, "Error in GPS connection-gating: ${e.message}")
             }
         }
 
-        return START_STICKY  // Restart if killed
+        // NOT sticky: GPS is bound to the companion service's lifetime (started in the
+        // foreground alongside it), so it shouldn't independently resurrect with a null intent.
+        return START_NOT_STICKY
     }
 
     @android.annotation.SuppressLint("MissingPermission")  // Checked in hasLocationPermissions()
@@ -132,15 +149,14 @@ class GpsService : Service() {
         super.onDestroy()
         Log.i(tag, "GpsService destroyed, stopping location updates")
 
-        // Stop listening for location updates. locationListener stays null if
-        // setupLocationListener() bailed early (permissions denied), so guard
-        // with ?.let instead of !! to avoid an NPE during teardown.
-        if (hasLocationPermissions()) {
-            try {
-                locationListener?.let { locationManager?.removeUpdates(it) }
-            } catch (e: SecurityException) {
-                Log.e(tag, "Security exception removing updates: ${e.message}")
-            }
+        // Stop listening for location updates. removeUpdates needs no permission, so DON'T
+        // gate it on hasLocationPermissions() — if permission was revoked mid-run, the guard
+        // would skip unregistration and leak the listener. locationListener is null only if
+        // setupLocationListener() bailed, hence ?.let.
+        try {
+            locationListener?.let { locationManager?.removeUpdates(it) }
+        } catch (e: Exception) {
+            Log.e(tag, "Error removing location updates: ${e.message}")
         }
 
         scope.cancel()
@@ -165,7 +181,7 @@ class GpsService : Service() {
 
             override fun onProviderEnabled(provider: String) {
                 Log.i(tag, "Location provider enabled: $provider")
-                resumeLocationUpdates()
+                if (shouldTrack) resumeLocationUpdates()
             }
 
             override fun onProviderDisabled(provider: String) {
@@ -177,8 +193,8 @@ class GpsService : Service() {
                 Log.d(tag, "Provider status changed: $provider = $status")
             }
         }
-
-        resumeLocationUpdates()
+        // NB: don't request updates here — the connectedDeviceCount collector in onStartCommand
+        // resumes them only while a device is linked (see shouldTrack).
     }
 
     /**
@@ -187,6 +203,9 @@ class GpsService : Service() {
     @android.annotation.SuppressLint("MissingPermission")  // Checked in hasLocationPermissions()
     private fun resumeLocationUpdates() {
         if (!hasLocationPermissions()) return
+
+        // Re-register cleanly so repeated resumes (provider re-enable, reconnect) don't stack.
+        try { locationListener?.let { locationManager?.removeUpdates(it) } } catch (_: Exception) {}
 
         try {
             val providers = mutableListOf<String>()
@@ -208,10 +227,10 @@ class GpsService : Service() {
 
             for (provider in providers) {
                 try {
-                    // Request updates: min 1 second, min 0 meters (all changes)
+                    // ~4 s is plenty for geotagging captures + motion; 1 s was needless drain.
                     locationManager?.requestLocationUpdates(
                         provider,
-                        1000,    // Min time interval: 1 second
+                        4000,    // Min time interval: 4 seconds
                         0f,      // Min distance: 0 meters
                         locationListener!!
                     )
@@ -222,6 +241,16 @@ class GpsService : Service() {
             }
         } catch (e: Exception) {
             Log.e(tag, "Error resuming location updates: ${e.message}")
+        }
+    }
+
+    /** Stop polling GPS (no device connected) while keeping the service alive. */
+    private fun pauseLocationUpdates() {
+        try {
+            locationListener?.let { locationManager?.removeUpdates(it) }
+            Log.i(tag, "Location updates paused (no connected device)")
+        } catch (e: Exception) {
+            Log.e(tag, "Error pausing location updates: ${e.message}")
         }
     }
 

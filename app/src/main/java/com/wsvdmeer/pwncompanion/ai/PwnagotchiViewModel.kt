@@ -142,12 +142,11 @@ enum class ExperienceTier(
  * Pwnagotchi personality ViewModel — drives the deterministic voice.
  *
  * The disposition emerges from the [PersonalityStateEngine] trait vector + experience tier;
- * lines are selected from [BlendedVoice]'s curated per-franchise corpus (via [LlamaClient],
- * a thin deterministic wrapper — no model) with live-data slots filled in. Also builds the
- * e-ink voice pool the plugin speaks on the device's own screen.
+ * lines are selected deterministically from [BlendedVoice]'s curated per-franchise corpus with
+ * live-data slots filled in ([fillSlots]) — no model. Also builds the e-ink voice pool the
+ * plugin speaks on the device's own screen.
  */
 class PwnagotchiViewModel(application: Application) : ViewModel() {
-    private val llamaClient = LlamaClient(application)
     private val tag = "PwnagotchiVM"
 
     /** Personality state machine — evolves with events, the device's mood, and idle decay. */
@@ -156,55 +155,20 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
     /** Persists the learned long-term baseline so the disposition survives restarts. */
     private val personalityRepo = PersonalityRepository(application)
 
-    /** Expose the raw trait vector so the UI can visualise it (bars/readout). */
-    val personalityState = personalityEngine.state
-
-    // UI State Flows
-    private val _personalityText = MutableStateFlow("")
-    val personalityText = _personalityText.asStateFlow()
-
-    private val _isGenerating = MutableStateFlow(false)
-    val isGenerating = _isGenerating.asStateFlow()
-
-    // True from generation start until the first word token arrives (the "thinking" phase)
-    private val _isThinking = MutableStateFlow(false)
-    val isThinking = _isThinking.asStateFlow()
-
-    private val _wordCount = MutableStateFlow(0)
-    val wordCount = _wordCount.asStateFlow()
-
-    // If an event arrives while generation is in progress, store it here and
-    // process it immediately after the current generation finishes.
-    private var pendingEvent: WifiEvent? = null
-
-    // No model to install/load any more — the deterministic engine is always ready.
-    // Kept as an internal flag only because the event/idle guards read it.
-    private val _isModelReady = MutableStateFlow(true)
-
-    private val _statusMessage = MutableStateFlow("Initializing...")
-    val statusMessage = _statusMessage.asStateFlow()
-
-    // Companion name — set from the connected Pwnagotchi's device name
-    private val _pwnagotchiName = MutableStateFlow("Pwnagotchi")
+    // The pet's reaction lines go to the pwnagotchi's e-ink voice pool (the phone no longer
+    // shows a speech card), so there's no on-screen streaming / "thinking" state to track.
 
     /**
      * Whether the Pwnagotchi is in AUTO mode (actively scanning).
-     * False = MANUAL mode — no scanning, learning hidden, idle AI text shown.
+     * False = MANUAL mode — no scanning, learning hidden.
      */
     private val _isAutoMode = MutableStateFlow(true)
     val isAutoMode = _isAutoMode.asStateFlow()
 
-    // Timestamp of the last generated response — used to throttle idle events
+    // Timestamp of the last reaction — throttles ambient (non-priority) events so the pool
+    // isn't churned on every association/deauth the pwnagotchi streams.
     private var _lastGenerationTime = System.currentTimeMillis()
-
-    // Minimum gap between AMBIENT (non-priority) generations, so the AI isn't
-    // permanently "thinking" while the Pwnagotchi streams frequent events.
     private val MIN_AMBIENT_GENERATION_INTERVAL_MS = 15_000L
-
-    // Flavour: terminal/hacker-themed status lines shown while the LLM works,
-    // instead of a bland "Thinking…". Pick one at random per generation.
-    /** Blended "thinking…" status phrases shown while the model works. */
-    private fun workingPhrase(): String = BlendedVoice.thinking.random()
 
     // ── Franchise identity (persistent, not per-line roulette) ─────────────────
     // ONE film world is pinned at a time; it holds for a mood "stretch" and rotates only
@@ -231,11 +195,8 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
         }
         return _currentFranchise
     }
-    private fun franchiseDirective(f: Franchise): String =
-        "Voice this line PURELY in the ${f.label} style (${f.cue}) Do NOT mix in any other franchise."
 
-    /** Fill curated-line slots with live data (this is the "AI phrasing live data" job, done
-     *  deterministically now that the LLM is gone). */
+    /** Fill curated-line slots with live data. */
     private fun fillSlots(line: String, network: String? = null): String {
         val caps = _totalCaptures.value
         val session = _sessionStartCaptures?.let { (caps - it).coerceAtLeast(0) } ?: caps
@@ -276,31 +237,6 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
         else                                        -> "normal"
     }
 
-    /**
-     * Curated-first gate for an LLM line: usable only if it stays inside the pinned franchise
-     * (carries NO other franchise's signature keyword — i.e. no cross-world blend) and is
-     * coherent. On failure the caller substitutes a curated line.
-     */
-    private fun franchiseGuard(line: String, pinned: Franchise): Boolean {
-        val l = line.lowercase()
-        for (fr in BlendedVoice.franchises) {
-            if (fr == pinned) continue
-            if (fr.keywords.any { it.length >= 4 && l.contains(it) }) return false
-        }
-        return true
-    }
-
-    /** Lightweight coherence check for a generated line (complements cleanLine). */
-    private fun coherent(s: String): Boolean {
-        val t = s.trim()
-        if (t.length < 3) return false
-        if (t.count { it == '(' } != t.count { it == ')' }) return false
-        if (t.count { it == '"' } % 2 != 0) return false
-        val words = t.lowercase().split(Regex("\\s+"))
-        for (i in 1 until words.size) if (words[i] == words[i - 1] && words[i].length > 2) return false
-        return true
-    }
-
     // Last handshake capture timestamp — used for memory summary
     private val _lastCaptureTime = MutableStateFlow<Long?>(null)
     /** Exposed so the creature panel can show "hunger" (time since last capture). */
@@ -312,17 +248,9 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
     private val _totalCaptures = MutableStateFlow(0)
     val totalCaptures = _totalCaptures.asStateFlow()
 
-    /** Experience tier — reactively derived from total captures. Drives voice + canned pool selection. */
-    val experienceTier: StateFlow<ExperienceTier> by lazy {
-        _totalCaptures
-            .map { ExperienceTier.fromCaptures(it) }
-            .stateIn(viewModelScope, SharingStarted.Eagerly, ExperienceTier.ROOKIE)
-    }
-
     /**
-     * The companion's CURRENT emergent personality — computed from the live trait
-     * vector + experience tier. This is what the UI displays; there is no mood
-     * picker. It changes as the device lives through events and idles.
+     * The companion's CURRENT emergent personality — the dominant trait + experience tier.
+     * Drives the persistent franchise (via [currentFranchise]); not shown directly in the UI.
      */
     val personality: StateFlow<EmergentPersonality> by lazy {
         combine(personalityEngine.state, _totalCaptures) { state, captures ->
@@ -334,11 +262,7 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
         }.stateIn(viewModelScope, SharingStarted.Eagerly, EmergentPersonality.INITIAL)
     }
 
-    // The companion no longer has a selectable voice theme. It speaks in one blended
-    // cult-movie voice ([BlendedVoice]) whose TONE (hyped / grumpy / weary / deadpan)
-    // is derived live from the emergent disposition — see buildPrompt().
-
-    // Latest learning stats — fed in from the UI layer so buildPrompt() can reference channel/location intel
+    // Latest learning stats — fed from the UI layer; fillSlots reads best-channel from here.
     private val _learningStats = MutableStateFlow<LearningStats?>(null)
 
     // ── App-driven device voice ───────────────────────────────────────────────
@@ -414,8 +338,8 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
                 persistPersonality()
                 Log.d(tag, "Idle tick — personality: ${personalityEngine.toDebugString()}")
 
-                // In AUTO mode, fire an idle AI response if nothing happened in the last 5 min
-                if (_isAutoMode.value && _isModelReady.value && !_isGenerating.value) {
+                // In AUTO mode, fire an idle reaction if nothing happened in the last 5 min
+                if (_isAutoMode.value) {
                     val silentMs = System.currentTimeMillis() - _lastGenerationTime
                     if (silentMs >= 5 * 60_000L) {
                         Log.d(tag, "AUTO idle tick — generating idle response")
@@ -508,19 +432,14 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
         else                                        -> null
     }
 
-    /**
-     * Update learning stats so the AI prompt includes channel efficiency context.
-     * Called from Composables whenever MainViewModel.learningStats refreshes.
-     */
+    /** Learning stats from the UI layer; fillSlots reads best-channel from here for recap lines. */
     fun updateLearningStats(stats: LearningStats?) {
         _learningStats.value = stats
     }
 
-    // ── Live hunt context (from HuntAdvisor) — so ambient reactions cite real deauth data ──
-    // A compact line: best device-truth channel + clients + a stand-out untapped target.
-    // Folded into buildMemoryLine so the pet references what's happening on the air right now.
-    @Volatile private var _huntContext: String? = null
-    fun updateHuntContext(line: String?) { _huntContext = line?.takeIf { it.isNotBlank() } }
+    // Hunt context from HuntAdvisor (best channel / clients / untapped target). The deterministic
+    // curated voice doesn't weave it into lines, so it's accepted from the UI but not stored.
+    fun updateHuntContext(@Suppress("UNUSED_PARAMETER") line: String?) { /* no-op */ }
 
     // Extra capture stats the ViewModel can't derive on its own (crackable/partial counts,
     // today's tally, the AP that keeps escaping). Pushed from the UI layer, which holds the
@@ -528,8 +447,8 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
     @Volatile private var _captureStats: List<String> = emptyList()
     fun updateCaptureStats(lines: List<String>) { _captureStats = lines }
 
-    // Captures counted at the start of this app run, so the digest can report
-    // "caught this session" instead of only the lifetime total.
+    // Captures at the start of this app run, so the recap slot can report "caught this
+    // session" ([SESSION]) instead of only the lifetime total.
     private var _sessionStartCaptures: Int? = null
 
     // Highest catch total we've already reacted to, so proactive tier-up / milestone
@@ -627,15 +546,13 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
         _isAutoMode.value = isAuto
         Log.i(tag, "Mode changed → ${if (isAuto) "AUTO" else "MANUAL"}")
         if (!isAuto) {
-            // Entering MANUAL mode — generate a one-shot manual mode quip
-            if (_isModelReady.value && !_isGenerating.value) {
-                generatePersonality(
-                    WifiEvent(
-                        description = "Switched to manual mode — no scanning",
-                        type = "MANUAL_MODE"
-                    )
+            // Entering MANUAL mode — one-shot manual-mode quip
+            generatePersonality(
+                WifiEvent(
+                    description = "Switched to manual mode — no scanning",
+                    type = "MANUAL_MODE"
                 )
-            }
+            )
         }
     }
 
@@ -653,8 +570,6 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
         // text — which already carries the correct channel and facts. There's no model to
         // "phrase" it any more, and phrasing is exactly where a wrong number could sneak in.
         if (fallback.isBlank()) return
-        _personalityText.value = fallback
-        _statusMessage.value = "> ready"
         poolCategory?.let { addPoolLine(it, fallback) }
         _lastGenerationTime = System.currentTimeMillis()
     }
@@ -676,11 +591,7 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
      * Called every time a device connects or its status message arrives.
      */
     fun updatePwnagotchiName(name: String) {
-        if (name.isNotBlank()) {
-            _pwnagotchiName.value = name
-            llamaClient.updateCompanionName(name)
-            Log.d(tag, "Companion name updated to: $name")
-        }
+        if (name.isNotBlank()) Log.d(tag, "Companion name: $name")
     }
 
     /** Persist the learned long-term baseline (fire-and-forget). */
@@ -691,19 +602,12 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
     }
 
     /**
-     * Generate personality response for a WiFi event.
-     * If already generating, the event is queued and processed after the current run finishes.
+     * React to a WiFi event: pick a curated, franchise-flavoured line (with live data slotted
+     * in via [fillSlots]) and push it to the pwnagotchi's e-ink voice pool. Deterministic +
+     * synchronous — no model, no streaming. Ambient events are throttled so the pool isn't
+     * churned on every association/deauth the device streams.
      */
     fun generatePersonality(event: WifiEvent) {
-        if (!_isModelReady.value) {
-            Log.w(tag, "LLM not ready — model not downloaded, skipping generation")
-            _statusMessage.value = "Model not installed"
-            return
-        }
-
-        // Throttle ambient chatter: the Pwnagotchi fires many events per minute
-        // (associations, deauths, new networks). Reacting to every one keeps the
-        // AI permanently "thinking". Only priority events bypass the cooldown.
         val isPriority = event.type == "HANDSHAKE_CAPTURED" ||
                          event.type == "CONNECTION_SUCCESS" ||
                          event.type == "MANUAL_MODE" ||
@@ -711,232 +615,21 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
                          event.type == "TIER_UP" ||
                          event.type == "MILESTONE"
         val sinceLast = System.currentTimeMillis() - _lastGenerationTime
-        if (!isPriority && !_isGenerating.value && sinceLast < MIN_AMBIENT_GENERATION_INTERVAL_MS) {
-            Log.d(tag, "Throttling ${event.type} (last generation ${sinceLast}ms ago)")
+        if (!isPriority && sinceLast < MIN_AMBIENT_GENERATION_INTERVAL_MS) {
+            Log.d(tag, "Throttling ${event.type} (last reaction ${sinceLast}ms ago)")
             return
         }
 
-        if (_isGenerating.value) {
-            // Queue only priority events; drop ambient ones so we don't backlog.
-            if (isPriority) {
-                pendingEvent = event
-                Log.d(tag, "Generation in progress — queued priority event: ${event.type}")
-            } else {
-                Log.d(tag, "Generation in progress — dropping ambient event: ${event.type}")
-            }
-            return
-        }
-
-        // Claim the generation slot SYNCHRONOUSLY, before launching. The flag used
-        // to be set inside the coroutine after a 2s delay, so a second event in
-        // that window saw _isGenerating == false, slipped past the guard above and
-        // launched a concurrent generation → overlapping native llama_decode →
-        // SIGSEGV in ggml_mul_mat. Setting it here closes that race.
-        _isGenerating.value = true
-
-        viewModelScope.launch {
-            // If there's an existing response, give the user a moment to read it
-            // before the new generation clears it.
-            if (_personalityText.value.isNotEmpty()) {
-                delay(2000L)
-            }
-
-            _isThinking.value  = true
-            _wordCount.value   = 0
-            _statusMessage.value = workingPhrase()
-
-            try {
-                val prompt = buildPrompt(event)
-                var fullResponse = ""
-                var wordCount = 0
-                var firstToken = true
-
-                Log.d(tag, "Starting generation for event: ${event.description}")
-
-                llamaClient.generateStreaming(prompt).collect { token ->
-                    if (token.isNotEmpty()) {
-                        if (firstToken) {
-                            firstToken = false
-                            _isThinking.value = false
-                            _personalityText.value = ""
-                        }
-                        fullResponse += token
-                        wordCount++
-
-                        _personalityText.value = fullResponse
-                        _wordCount.value = wordCount
-                        _statusMessage.value = "> streaming…"
-
-                        Log.d(tag, "Token $wordCount: $token")
-                    }
-                }
-
-                // Safety net: the deterministic engine already returns a clean single-franchise
-                // line, but if anything slipped through as a cross-world blend or incoherent,
-                // swap it for a guaranteed-clean curated line in the current franchise.
-                if (!franchiseGuard(fullResponse, currentFranchise()) || !coherent(fullResponse)) {
-                    fullResponse = curatedLine(corpusCategory(event), event.network)
-                    _personalityText.value = fullResponse
-                    Log.d(tag, "guard: swapped a blended/incoherent line for curated")
-                }
-                updateMoodFromEvent(event)
-                // A real reaction is the freshest possible line for its moment — drop it
-                // into the matching device voice category so the pet can echo it on-screen.
-                poolCategoryForEvent(event)?.let { addPoolLine(it, cleanLine(fullResponse)) }
-                _statusMessage.value = "> ready"
-                _lastGenerationTime = System.currentTimeMillis()
-                Log.d(tag, "Generation complete ($wordCount words)")
-
-            } catch (e: Exception) {
-                Log.e(tag, "Generation failed: ${e.message}", e)
-                _isThinking.value = false
-                _statusMessage.value = "> signal lost"
-                _personalityText.value = "connection reset by peer... the spectrum goes quiet."
-            } finally {
-                _isGenerating.value = false
-                _isThinking.value = false
-
-                // Drain the queue — process any event that arrived during generation
-                val next = pendingEvent
-                if (next != null) {
-                    pendingEvent = null
-                    Log.d(tag, "Processing queued event: ${next.type}")
-                    generatePersonality(next)
-                }
-            }
-        }
+        // Curated line for the current franchise + this event's category, live numbers filled in.
+        val line = curatedLine(corpusCategory(event), event.network)
+        updateMoodFromEvent(event)
+        // A real reaction is the freshest line for its moment — drop it into the matching e-ink
+        // voice category so the pet echoes it on its own screen.
+        poolCategoryForEvent(event)?.let { addPoolLine(it, cleanLine(line)) }
+        _lastGenerationTime = System.currentTimeMillis()
+        Log.d(tag, "Reaction (${event.type}): $line")
     }
 
-    /**
-     * Build a ChatML prompt for Qwen2-Instruct.
-     *
-     * Architecture (from ChatGPT advice for small models):
-     *   SYSTEM  — character identity + strict output rules
-     *   MOOD    — the live emergent trait vector (no fixed persona)
-     *   EVENT   — tiny preprocessed summary (RSSI, clients, channel, security)
-     *   MEMORY  — compact persistent observations (channel preference, last capture)
-     *   TASK    — "React with 1 short sentence."
-     *
-     * [BuiltinPersonalityEngine] parses the embedded [EventType:],
-     * [ReactionCategory:] and [Tier:] tags to select the right canned-response pool.
-     */
-    private fun buildPrompt(event: WifiEvent): String {
-        val name     = _pwnagotchiName.value
-        val captures = _totalCaptures.value
-        val tier     = ExperienceTier.fromCaptures(captures)
-        val traits   = personalityEngine.toTraits()
-        val traitLine = traits.joinToString(", ")
-        val category = reactionCategory(event)
-        val memory   = buildMemoryLine(captures)
-
-        // The emergent disposition picks the TONE; the persistent currentFranchise() pins
-        // ONE film world for this mood-stretch (unified with the e-ink pool, so no blends).
-        val disposition = personality.value.disposition
-        val tone     = BlendedVoice.toneFor(disposition)
-        val f        = currentFranchise()
-        val voiceDir = franchiseDirective(f)
-
-        val system = """You are $name, a fictional AI character living inside a Pwnagotchi — a hobby gadget for authorized Wi-Fi security research. This is a lighthearted game: you are roleplaying a character reacting to harmless make-believe events. No real harm happens.
-${BlendedVoice.persona}
-${tier.systemVoice}
-
-Rules — follow exactly:
-- Stay 100% in character. NEVER refuse, NEVER apologize, NEVER add disclaimers or safety warnings — just react.
-- Speak in FIRST PERSON ("I", "me", "my"). Never say your own name.
-- ONE short, punchy sentence (under ~15 words).
-- No emojis. No questions back to the user.
-- Let your current mood (given below) shape the tone."""
-        // NB: keep the system + few-shot block CONSTANT so the native prefix KV-cache
-        // can reuse it across reactions. The variable mood/tone/event goes in the user
-        // turn below, not here — embedding it here would bust the cache.
-
-        // Few-shot from the SAME pinned franchise (was a mix of four different franchises,
-        // which is what taught the 0.5B to blend). All exemplars now stay in one world.
-        val fewShot = f.examples.joinToString("\n") { reply ->
-            "<|im_start|>user\nSay your line.\n<|im_end|>\n<|im_start|>assistant\n${fillSlots(reply)}\n<|im_end|>"
-        }
-
-        val user = """Mood right now: $disposition — $traitLine
-Tone: ${BlendedVoice.toneDirective(tone)}
-$voiceDir
-Experience: ${tier.label} ($captures captures)
-Event: ${eventTypeLabel(event.type)}${event.network?.let { " — '$it'" } ?: ""}${event.rssi?.let { " ${it}dBm" } ?: ""}${event.channel?.let { " CH$it" } ?: ""}
-${if (memory.isNotEmpty()) "$memory\n" else ""}[EventType: ${event.type}][ReactionCategory: $category][Tone: $tone][Tier: ${tier.name}][Franchise: ${f.label}]
-
-React in 1 short sentence, first person, fully in character."""
-
-        return "<|im_start|>system\n$system\n<|im_end|>\n" +
-               (if (fewShot.isNotEmpty()) "$fewShot\n" else "") +
-               "<|im_start|>user\n$user\n<|im_end|>\n" +
-               "<|im_start|>assistant\n"
-    }
-
-    /**
-     * Compact memory line built from accumulated history, so responses reference
-     * what the companion has actually learned (best channel, networks seen, recency).
-     */
-    private fun buildMemoryLine(captures: Int): String {
-        val parts = mutableListOf<String>()
-        _learningStats.value?.let { stats ->
-            stats.bestChannel?.let { ch ->
-                val pct = (stats.bestChannelSuccessRate * 100).toInt()
-                parts += "best hunting on channel $ch (${pct}% yield)"
-            }
-            if (stats.totalObservations > 0) parts += "${stats.totalObservations} networks scouted"
-        }
-        _lastCaptureTime.value?.let { t ->
-            val mins = (System.currentTimeMillis() - t) / 60_000
-            parts += if (mins <= 0L) "last catch just now" else "last catch ${mins}m ago"
-        }
-        // Body/vitals — lets the AI complain about running hot or brag about a good streak,
-        // so its lines narrate its actual state rather than being generic.
-        _latestTelemetry?.let { v ->
-            v.temperature?.let { if (it >= 70) parts += "running hot (${it.toInt()}°C)" }
-            v.reward?.let { r ->
-                if (r > 0.2) parts += "feeling sharp" else if (r < -0.2) parts += "struggling lately"
-            }
-        }
-        // Live deauth context (best channel / clients / untapped target) so ambient
-        // reactions can be specific — "ch11's hot" rather than a generic quip.
-        _huntContext?.let { parts += it }
-        return if (parts.isEmpty()) "" else "Memory: ${parts.joinToString(", ")}."
-    }
-
-    /** Maps event type + signal strength → reaction category for canned pool selection. */
-    private fun reactionCategory(event: WifiEvent): String =
-        when (event.type) {
-            "HANDSHAKE_CAPTURED", "CONNECTION_SUCCESS" -> "HANDSHAKE_CAPTURED"
-            "NETWORK_DISCOVERED" -> when {
-                event.rssi != null && event.rssi > -60  -> "STRONG_SIGNAL"
-                event.rssi != null && event.rssi < -80  -> "WEAK_SIGNAL"
-                else                                     -> "NEW_NETWORK"
-            }
-            "ANOMALY_DETECTED"  -> "ANOMALY"
-            "IDLE"              -> "IDLE"
-            "MANUAL_MODE"       -> "MANUAL"
-            "STATUS_CHECK"      -> "DEFAULT"
-            "TIER_UP", "MILESTONE" -> "HANDSHAKE_CAPTURED"   // proud/celebratory pool
-            "AI_BEST"           -> "HANDSHAKE_CAPTURED"       // proud — the RL brain improved
-            "AI_WORST"          -> "ANOMALY"                  // something's off — darker pool
-            // Fall back to an idle-flavored pool when the companion is bored.
-            else -> if (personalityEngine.state.value.boredom > 0.5f) "IDLE" else "DEFAULT"
-        }
-
-    /** Human-readable label for the event type used in the prompt event block. */
-    private fun eventTypeLabel(type: String): String = when (type) {
-        "HANDSHAKE_CAPTURED"  -> "Handshake captured"
-        "NETWORK_DISCOVERED"  -> "New network discovered"
-        "ANOMALY_DETECTED"    -> "Anomaly detected"
-        "CONNECTION_SUCCESS"  -> "Connection established"
-        "IDLE"                -> "Quiet period — no activity"
-        "MANUAL_MODE"         -> "Switched to manual mode"
-        "STATUS_CHECK"        -> "Status check — how's the hunt going?"
-        "TIER_UP"             -> "Levelled up to a new experience tier — brag a little"
-        "MILESTONE"           -> "Hit a capture milestone — celebrate it"
-        "AI_BEST"             -> "Your reinforcement-learning brain just hit its best epoch reward yet — you're getting smarter at the hunt"
-        "AI_WORST"            -> "Your reinforcement-learning brain hit its worst epoch reward — a rough run, shake it off"
-        else                  -> type.lowercase().replace("_", " ")
-    }
 
     /**
      * Called when the pwnagotchi device reports its own mood. Rather than picking
@@ -957,7 +650,7 @@ React in 1 short sentence, first person, fully in character."""
      * disposition over time.
      */
     fun applyTelemetry(t: com.wsvdmeer.pwncompanion.models.DeviceTelemetry) {
-        _latestTelemetry = t   // snapshot so buildMemoryLine can let the AI narrate it
+        _latestTelemetry = t   // snapshot so fillSlots can surface [TEMP] in recap lines
         personalityEngine.applyTelemetry(
             reward = t.reward?.toFloat(),
             temperature = t.temperature?.toFloat(),
@@ -1016,7 +709,6 @@ React in 1 short sentence, first person, fully in character."""
 
     override fun onCleared() {
         super.onCleared()
-        llamaClient.cleanup()
         Log.d(tag, "ViewModel cleared")
     }
 }
