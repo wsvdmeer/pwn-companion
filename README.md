@@ -26,11 +26,12 @@ The guiding idea: **move the thinking to the phone** (which has compute, GPS, an
 ## Screenshots
 
 <p>
-  <img src="docs/screenshot-ai.png" width="47%" alt="The terminal console: live disposition, vitals, captures, and steering" />
-  <img src="docs/screenshot-learning.png" width="47%" alt="Per-channel learning bars and activity-by-hour" />
+  <img src="docs/screenshot-console.png" width="32%" alt="Connected console: the pwnagotchi e-ink face, vitals, history channels, captures, log" />
+  <img src="docs/screenshot-learning.png" width="32%" alt="Learning detail: per-channel activity bars + activity-by-hour" />
+  <img src="docs/screenshot-standby.png" width="32%" alt="Standby screen shown when no pwnagotchi is linked" />
 </p>
 
-*Left: the terminal console — live disposition, vitals, captures, and the live steering it's doing. Right: the channel-learning readout behind the `[ history ]` link.*
+*Left: the live console — the pwnagotchi's mirrored e-ink face (with the current film-world captioned, `‹ back to the future ›`), vitals, per-channel history, captures, and log. Middle: the `[ history ]` learning detail — channels by activity + activity-by-hour. Right: the `[ standby ]` screen when nothing's linked. (SSIDs / node name / IP redacted for publishing.)*
 
 ---
 
