@@ -8,7 +8,7 @@ single **Bluetooth PAN** link — get both in place and they find each other aut
  ┌────────────────────┐   Bluetooth   ┌────────────────────────┐
  │ PwnCompanion app   │◀───  PAN  ───▶│ bt-tether plugin        │ ← the transport
  │  · WebSocket server│   (bnep0 /    │   (+ shares phone's net)│
- │  · AI brain + LLM  │    bt-pan)    │ pwn-companion.py plugin  │ ← our bridge
+ │  · brain + voice   │    bt-pan)    │ pwn-companion.py plugin  │ ← our bridge
  │  · GPS             │               │ bettercap / hunting      │
  └────────────────────┘               └────────────────────────┘
 ```
@@ -75,11 +75,11 @@ Then restart: `sudo systemctl restart pwnagotchi`.
 
 **Or build it yourself:**
 ```bash
-# On your dev machine (needs JDK 17, Android SDK 36, NDK + CMake ≥ 3.22.1):
+# On your dev machine (needs JDK 17, Android SDK 36 — no NDK/CMake):
 ./gradlew assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
-(Or open the project in Android Studio and hit **Run**.) See the [README setup section](README.md#setup) for the full prerequisite list. On **first launch** the app downloads its AI voice model (Qwen2.5-0.5B, ~491 MB) over WiFi.
+(Or open the project in Android Studio and hit **Run**.) See the [README setup section](README.md#setup) for the full prerequisite list. The voice is fully on-device — **no model download**, so it opens straight to the console and works offline.
 
 **Grant the permissions** it asks for: Bluetooth (the link), Location (geotag captures + required for BT scanning), Notifications (the foreground notice + alerts).
 
@@ -92,8 +92,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ## Step 5 — Verify it's working
 
 - App: the top line shows **`link : ● … online`** and the live e-ink screen appears.
-- The **AI pet** starts talking (and its lines now show on the pwnagotchi's own screen too).
-- `[ captures ]` fills with your geolocated handshake history; `[ learning ]` shows per-channel bars.
+- The **pet** starts talking on the pwnagotchi's own e-ink screen (fresh in-character lines instead of the stock quips).
+- `[ captures ]` fills with your geolocated handshake history; `[ steering ]` shows the live channel nudges, and the `[ history ]` link opens per-channel bars.
 
 ---
 

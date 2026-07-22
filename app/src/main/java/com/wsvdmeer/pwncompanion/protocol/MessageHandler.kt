@@ -49,6 +49,7 @@ class MessageHandler {
         val signal: Int? = null,
         val channel: Int? = null,
         val bssid: String? = null,
+        val station: String? = null,   // deauth target (client MAC)
         val security: String? = null,
         val totalCaptures: Int = 0,
         val timestamp: Long = System.currentTimeMillis()
@@ -272,6 +273,7 @@ class MessageHandler {
                         signal       = message.signal,
                         channel      = message.channel,
                         bssid        = message.bssid,
+                        station      = message.station,
                         security     = message.security,
                         totalCaptures = message.totalCaptures ?: 0,
                     )

@@ -434,7 +434,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 appendLog(when (event.eventType) {
                     "handshakes_captured" -> "[+] handshake captured :: ${event.network ?: "?"}$ch"
                     "network_discovered"  -> "[*] target acquired :: ${event.network ?: "?"}$ch"
-                    "anomaly_detected"    -> "[!] deauth/anomaly :: ${event.network ?: "spectrum"}$ch"
+                    "anomaly_detected"    -> "[!] deauth/anomaly :: ${event.station ?: event.network ?: event.bssid ?: "spectrum"}$ch"
                     else                  -> "[>] ${event.eventType} :: ${event.network ?: ""}"
                 })
 

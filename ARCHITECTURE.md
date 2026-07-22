@@ -128,8 +128,9 @@ MainActivity
                     ├─ header                    pwncompanion v1  root@<name>
                     ├─ ConsoleStatusBlock        link / node / mode / gps
                     ├─ [ screen ]                live e-ink image (RawDeviceImage)
-                    ├─ PwnagotchiPersonalityCard [ ai ] — emergent disposition + LLM response
-                    ├─ ConsoleLearningBlock      [ learning ] — observations, busiest channel
+                    ├─ ConsoleSteeringBlock      [ steering ] — live channel priority + tuning
+                    ├─ ConsoleAdvisorBlock       [ alerts ] — mission problems (shown only when present)
+                    ├─ [ history ]               link → LearningDetailScreen (per-channel + hourly)
                     ├─ ConsoleVitalsBlock        [ vitals ] — temp/cpu/mem/reward/env/peers/epoch
                     ├─ ConsoleGpsBlock           [ gps ] — lat/lon/acc/alt/fix
                     ├─ ConsoleCapturesBlock      [ captures ] — total / geolocated / recent
@@ -192,9 +193,9 @@ PwnagotchiViewModel
     ├─ personality: EmergentPersonality   — dominant trait → disposition + accent colour + tier
     │
     ├─ generatePersonality(WifiEvent)
-    │       _isGenerating claimed SYNCHRONOUSLY before launch (prevents concurrent inference)
-    │       builds prompt: emergent traits + captures + event + compact memory
-    │       streams tokens via LlamaClient.generateStreaming() (serialised by inferenceMutex)
+    │       maps emergent traits → tone + reaction-category, picks the current franchise,
+    │       selects a curated line from BlendedVoice.corpus and fills any live-data slots
+    │       (deterministic — no inference; word-by-word "type-out" is cosmetic)
     │
     ├─ applyTelemetry(DeviceTelemetry)     — feeds the engine, persists baseline
     │
@@ -208,9 +209,9 @@ PwnagotchiViewModel
 
 The persona is fixed; what varies is **tone** and **franchise**, both derived, never chosen:
 
-- **Tone** — the emergent disposition maps to `hyped / grumpy / weary / deadpan` (`BlendedVoice.toneFor`), injected as a directive into the prompt.
-- **Franchise** — one of ten film worlds (Evil Dead, Star Wars, Matrix/Mr Robot, Harry Potter, Terminator, Tron, Jurassic Park, Alien, RoboCop, Blade Runner) is **pinned per line** (avoiding an immediate repeat) so a reply never blends two.
-- The reliable fallback (`BuiltinPersonalityEngine`) picks canned lines keyed by `category × tone`, all single-franchise. A refusal gate keeps any "Sorry, I can't…" off-screen.
+- **Tone** — the emergent disposition maps to `hyped / grumpy / weary / deadpan` (`BlendedVoice.toneFor`), colouring which line is chosen.
+- **Franchise** — one of ten film worlds (Evil Dead, Star Wars, Matrix/Mr Robot, Harry Potter, Terminator, Tron, Jurassic Park, Alien, RoboCop, Blade Runner) is **persistent** — pinned for a whole mood-stretch (`currentFranchise()`), rotating only when the disposition flips — and unified across the app and the e-ink, so every line sits in one world.
+- `BuiltinPersonalityEngine` selects from `BlendedVoice.corpus[franchise][reaction-category]` (eight categories), all single-franchise. Fully deterministic — no model, no generation, so nothing to refuse or blend.
 
 ### Voice on the device's own screen (voice pool)
 
@@ -224,14 +225,11 @@ PwnagotchiViewModel
     │       data via buildRecapPrompt (rotating focus) instead of the stock kicked/handshakes
     │       tally; on_unread_messages is pointed at the same recap pool so the grid "N new
     │       messages" line stops stealing the manual screen)
-    │  pre-seeded with curated short lines for every category (so `normal` — the device's
-    │  dominant idle state, set each recon cycle — is never blank), then filled two ways:
-    │    • passively — a real event reaction is folded into its matching category
-    │    • actively  — a ~90s round-robin loop generates one line/category (generateQuick,
-    │                  small token budget), only while connected + model ready; LLM lines
-    │                  prepend and push the seeds out over time (→ more variety)
-    │  cleanLine(): keeps ONE short clause, rejects rambles / "X" cue-parrots / dangling
-    │               fragments, caps ~44 chars → matches the stock lines' length (~12–34c)
+    │  seeded from the curated corpus for every category (so `normal` — the device's
+    │  dominant idle state, set each recon cycle — is never blank), reseeded from the
+    │  corpus whenever the persistent franchise rotates, and folded with a real event
+    │  reaction into its matching category as events arrive → variety without a model
+    │  lines are pre-authored short clauses (~12–44c) → match the stock lines' e-ink length
     ↓  (StateFlow) → MainViewModel.sendVoicePool()
 Command  {type:"command", message:"set_voice_pool", data:<JSON {category:[line,…]}>}
     ↓  (existing OutgoingMessageQueue — no new wire type)
@@ -239,7 +237,7 @@ Plugin (pwn-companion.py)
     ├─ _apply_voice_pool()  — atomic dict swap + timestamp
     └─ on_ui_setup → _wrap_voice(ui._voice): monkeypatches Voice.on_<category>() so each
        returns a pooled line when fresh (app connected + < 20 min old), else defers to the
-       ORIGINAL stock method. Native inference is serialised, so no e-ink/LLM contention.
+       ORIGINAL stock method.
 ```
 
 Falls back to the device's own voice cleanly whenever the app is disconnected, the pool is stale, or a category has no clean line. Functional readouts (`on_free_channel`/`on_napping`/`on_waiting` countdowns) are deliberately left to the stock voice.
@@ -306,7 +304,7 @@ capture (.pcap)
 
 ## Deauth Advisor & Steering
 
-The headline mission feature — **all analysis is phone-side (Kotlin); the LLM only phrases it**, so the recommendation is always correct.
+The headline mission feature — **all analysis is phone-side (Kotlin), deterministic**, so the recommendation is always correct. `[ steering ]` shows the live nudges; genuine problems surface as `[ alerts ]`; the pet voices them on its e-ink.
 
 - `HuntAdvisor` ranks channels by the device's own `autotune_stats` (handshakes + client density), flags an untapped target (seen often, never caught), and raises mission alerts (`blind` / `running hot` / `APs but 0 clients` / dry spell).
 - `SyncScheduler` sends the top channels back as `set_channel_priority` (→ bettercap `wifi.recon.channel`) every 45 s — a soft, reversible nudge, **skipped in MANUAL mode**. Prefers device-truth autotune, then the app's learned channel/time/location model.
@@ -329,7 +327,6 @@ On reconnect everything repopulates automatically from incoming messages.
 
 - **BT tethering must be enabled manually** in Android Settings — the app does not initiate tethering, it only observes the resulting network interface
 - **One Pwnagotchi at a time** — BT PAN supports one PAN client per Android device
-- **AI model (~491 MB, Qwen2.5 0.5B Instruct Q4_K_M GGUF)** — downloaded on first run; built via llama.cpp JNI (compiled from C++ source by CMake/NDK for arm64-v8a)
-- **On-device inference is serialised** — one shared llama context; concurrent `llama_decode` calls corrupt ggml memory, so `GgufInference.inferenceMutex` guards all native calls
+- **No model / no native code** — the voice is a pure-Kotlin curated corpus + slot templates; there's nothing to download and no NDK/CMake in the build. *(Earlier versions shipped a ~491 MB Qwen2.5-0.5B via llama.cpp JNI — removed once the personality moved into the corpus.)*
 - **DHCP timing** — bnep0 interface appears before DHCP assigns the IP; app retries IP lookup up to 10× with 2s gaps
 

@@ -54,25 +54,36 @@ internal class BuiltinPersonalityEngine : LlamaInference {
     // ── internals ─────────────────────────────────────────────────────────────
 
     private fun buildResponse(prompt: String): String {
-        val category = extractReactionCategory(prompt)
-        val tone     = extractTone(prompt)
-        val net      = extractNetwork(prompt)
-        val caps     = extractCaptures(prompt)
+        val franchise = extractFranchise(prompt)
+        val cat       = corpusCatFor(extractReactionCategory(prompt))
+        val net       = extractNetwork(prompt)
+        val caps      = extractCaptures(prompt)
 
-        // Pick the category's lines for the current tone, degrading gracefully:
-        // this tone → DEADPAN → any non-empty tone → the DEFAULT category.
-        val byTone = BlendedVoice.pools[category] ?: BlendedVoice.pools["DEFAULT"] ?: emptyMap()
-        val pool = byTone[tone]?.takeIf { it.isNotEmpty() }
-            ?: byTone[VoiceTone.DEADPAN]?.takeIf { it.isNotEmpty() }
-            ?: byTone.values.firstOrNull { it.isNotEmpty() }
-            ?: BlendedVoice.pools["DEFAULT"]?.get(VoiceTone.DEADPAN)
-            ?: listOf("...")
-        val idx = pickIndex("$category:$tone", pool.size)
-        val raw = pool[idx]
+        // Curated corpus: lines for the pinned franchise + category (linesFor degrades
+        // gracefully to the franchise's normal/handshake bucket, then its examples).
+        val pool = BlendedVoice.linesFor(franchise, cat)
+        val idx  = pickIndex("${franchise.name}:$cat", pool.size)
+        val raw  = pool.getOrElse(idx) { pool.firstOrNull() ?: "..." }
 
         return raw
-            .replace("[NETWORK]",  if (net.isNotBlank()) "'$net'" else "that network")
+            .replace("[NETWORK]",  if (net.isNotBlank()) "'$net'" else "that one")
             .replace("[CAPTURES]", if (caps > 0) caps.toString() else "a few")
+    }
+
+    /** The pinned franchise from the [Franchise: label] tag, or a random one. */
+    private fun extractFranchise(prompt: String): Franchise {
+        val label = Regex("""\[Franchise:\s*([^\]]+)\]""").find(prompt)?.groupValues?.get(1)?.trim()
+        return BlendedVoice.franchises.firstOrNull { it.label == label } ?: BlendedVoice.franchises.random()
+    }
+
+    /** Reaction category (from the prompt tags) → corpus category. */
+    private fun corpusCatFor(reaction: String): String = when (reaction) {
+        "HANDSHAKE_CAPTURED"           -> "handshake"
+        "STRONG_SIGNAL", "NEW_NETWORK" -> "assoc"
+        "WEAK_SIGNAL"                  -> "weary"
+        "ANOMALY"                      -> "deauth"
+        "IDLE"                         -> "idle"
+        else                           -> "normal"
     }
 
     /** Random index into a pool that avoids repeating the previous line for this bucket. */
