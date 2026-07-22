@@ -428,7 +428,6 @@ fun MainContentArea(
 
         // ── status ───────────────────────────────────────────────
         item {
-            val modelReady by pwnagotchiVM.isModelReady.collectAsState()
             ConsoleStatusBlock(
                 serverRunning = isServerRunning,
                 networkingArmed = networkingArmed,
@@ -436,9 +435,6 @@ fun MainContentArea(
                 queueSize = queueSize,
                 isAutoMode = isAutoMode,
                 gpsData = gpsData,
-                // Observing modelReady re-resolves the name once the GGUF finishes
-                // loading (Built-in AI → Qwen2.5 0.5B).
-                modelName = if (modelReady) pwnagotchiVM.modelName else "Built-in AI"
             )
             ConsoleRule()
         }
@@ -622,7 +618,6 @@ private fun ConsoleStatusBlock(
     queueSize: Int,
     isAutoMode: Boolean,
     gpsData: com.wsvdmeer.pwncompanion.models.GpsData?,
-    modelName: String = "",
 ) {
     val online = device?.isConnected == true
     val primary = MaterialTheme.colorScheme.primary
