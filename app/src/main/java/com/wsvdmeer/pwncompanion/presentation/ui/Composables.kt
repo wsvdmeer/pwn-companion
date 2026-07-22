@@ -578,6 +578,7 @@ fun MainContentArea(
                 isAutoMode = isAutoMode,
                 isServerRunning = isServerRunning,
                 networkingArmed = networkingArmed,
+                deviceConnected = connectedDevices.isNotEmpty(),
                 onAuto = { mainViewModel.requestMode(true) },
                 onManual = { mainViewModel.requestMode(false) },
                 onToggleService = {
@@ -1113,13 +1114,15 @@ private fun ConsoleCommandBar(
     isAutoMode: Boolean,
     isServerRunning: Boolean,
     networkingArmed: Boolean,
+    deviceConnected: Boolean,
     onAuto: () -> Unit,
     onManual: () -> Unit,
     onToggleService: () -> Unit,
 ) {
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        // Mode toggle — only meaningful while the service is up and a device is linked.
-        if (isServerRunning) {
+        // Mode toggle — only meaningful while a pwnagotchi is actually LINKED (not merely
+        // while the server is listening), since it sends restart_auto/manual to the device.
+        if (deviceConnected) {
             if (isAutoMode) CmdAction("go manual", MaterialTheme.colorScheme.tertiary, onManual)
             else CmdAction("go auto", MaterialTheme.colorScheme.primary, onAuto)
         }

@@ -151,7 +151,6 @@ class NetworkService(private val context: Context) {
     // firing a notification for every previously-cracked network.
     private val crackedNotified = java.util.Collections.synchronizedSet(HashSet<String>())
     @Volatile private var crackedBaselined = false
-    @Volatile private var lastConnectedNotifyMs = 0L
 
     private var serverStarted = false
     // "User wants networking on" — distinct from serverStarted (which is false after
@@ -472,13 +471,8 @@ class NetworkService(private val context: Context) {
             val ip = bluetoothMonitor.getBnep0InterfaceIp()
             NotificationHelper.updateNetworkNotification(context, ip, webSocketServer.getConnectedClientCount())
 
-            // One-off "connected" alert — throttled, because a flaky BT link can bounce
-            // connect/disconnect and we don't want to spam a notification each bounce.
-            val nowMs = System.currentTimeMillis()
-            if (nowMs - lastConnectedNotifyMs > 120_000) {
-                lastConnectedNotifyMs = nowMs
-                NotificationHelper.notifyConnected(context, deviceName)
-            }
+            // (No separate "Connected" alert — the ongoing notice already shows link state, and
+            // a flaky BT link would bounce it. Cracked-password alerts are the only ping.)
 
             // ✅ CRITICAL FIX: Keep UDP announcements running
             // If we stop them, Pwnagotchi can't reconnect after disconnect
@@ -540,9 +534,13 @@ class NetworkService(private val context: Context) {
                 }
             }
 
-            // Stop GPS foreground service when last client disconnects
+            // NOTE: GpsService is deliberately NOT stopped here. A BT tether blip drops the
+            // client constantly, and re-starting a location foreground service on reconnect is
+            // blocked when the app is backgrounded (Android 12+) — which left GPS stuck at
+            // "acquiring" while the pet still showed the last fix. GpsService is now tied to the
+            // companion service's lifetime (started in the foreground, stopped only on full
+            // stop), so it survives reconnects. Still stop the connect-scoped helpers.
             if (webSocketServer.getConnectedClientCount() == 0) {
-                stopGpsService()
                 // Stop IP monitoring when no more devices connected
                 stopIpMonitoring()
                 // Stop message queue processor
@@ -752,6 +750,13 @@ class NetworkService(private val context: Context) {
      * Start GPS foreground service for location tracking.
      * Used when Pwnagotchi connects to provide GPS location updates.
      */
+    /**
+     * Public hook so the companion service can start GPS while the app is in the FOREGROUND
+     * (at launch), where Android 12+ permits starting a `location` foreground service. Starting
+     * it lazily on client-connect often happens in the background, where the OS blocks it.
+     */
+    fun startGpsTracking() = startGpsService()
+
     private fun startGpsService(force: Boolean = false) {
         if (gpsServiceRunning && !force) {
             Log.d(tag, "GPS service already running")
