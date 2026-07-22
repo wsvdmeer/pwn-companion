@@ -417,7 +417,7 @@ private fun PixelBasemap(points: List<CaptureEntry>, current: GpsData?, modifier
                 }
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    "pinch to zoom · drag to pan · double-tap to reset      © OpenStreetMap © CARTO",
+                    "pinch to zoom · drag to pan · double-tap to reset",
                     color = dim.copy(alpha = 0.6f), fontSize = 9.sp, fontFamily = TerminalMono
                 )
             }

@@ -595,13 +595,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (states.size > prev) appendLog("[+] node linked :: ${states.size} online")
                 else if (states.isEmpty() && prev > 0) appendLog("[x] node disconnected")
 
-                // Clear transient display data when no devices are connected
+                // Clear transient display data when no devices are connected. NOTE: we do NOT
+                // clear _gpsData — the phone's own GPS is independent of the pwnagotchi link, so
+                // a BT blip shouldn't reset [ gps ] to "acquiring"; keep the last known fix.
                 if (states.isEmpty()) {
                     _currentImageData.value = null
                     _currentImageDeviceId.value = null
                     _currentImageTimestamp.value = null
                     _currentStatusMessage.value = null
-                    _gpsData.value = null
                     _lastNetworkEvent.value = null
                     _telemetry.value = null
                     _channelPriority.value = emptyList()

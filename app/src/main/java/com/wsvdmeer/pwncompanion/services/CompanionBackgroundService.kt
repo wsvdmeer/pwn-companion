@@ -73,6 +73,11 @@ class CompanionBackgroundService : Service() {
             ACTION_START_NETWORKING -> {
                 Log.i(tag, "  └─ Starting network services (explicit user request)")
                 startNetworkServices()
+                // Start GPS now, while we're in the foreground (the app just launched / the
+                // user tapped start). A `location` foreground service can't be started from the
+                // background on Android 12+, so starting it here — not lazily on client-connect —
+                // is what makes real-time GPS actually run (fixes [ gps ] stuck at "acquiring").
+                networkService.startGpsTracking()
                 // Explicit [ start service ]: don't just wait for a bnep transition
                 // (which won't fire if the interface is already up) — request a start
                 // now and let the health check sustain it.
@@ -87,6 +92,7 @@ class CompanionBackgroundService : Service() {
             else -> {
                 Log.i(tag, "  └─ Default start")
                 if (!networkService.isRunning()) startNetworkServices()
+                networkService.startGpsTracking()
                 START_NOT_STICKY  // Changed from START_STICKY to avoid crash-restart loops
             }
         }

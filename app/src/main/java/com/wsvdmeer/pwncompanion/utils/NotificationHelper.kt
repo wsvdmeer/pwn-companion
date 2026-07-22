@@ -33,12 +33,11 @@ object NotificationHelper {
     const val NOTIFICATION_CHANNEL     = "general_notifications_channel"
     // Alerts: user-facing events (cracked passwords, link up) — DEFAULT importance so
     // they actually surface + make a sound, unlike the MIN foreground-service notices.
-    const val ALERTS_CHANNEL           = "alerts_v1"
+    const val ALERTS_CHANNEL           = "alerts_v2"
 
     // Notification IDs (must match those used in the services)
     const val NOTIFICATION_ID_NETWORK  = 1000
     const val NOTIFICATION_ID_GPS      = 1002
-    const val NOTIFICATION_ID_CONNECTED = 1003
     private const val NOTIFICATION_ID_ALERTS_SUMMARY = 1004
     private const val CRACKED_ID_BASE  = 2_000_000
 
@@ -55,6 +54,9 @@ object NotificationHelper {
             // Retire the old LOW-importance channels so the quieter MIN ones apply.
             nm.deleteNotificationChannel("network_service_channel")
             nm.deleteNotificationChannel("location_service_channel")
+            // Retire the old DEFAULT alerts channel so the HIGH (heads-up) one takes effect —
+            // a channel's importance is locked after creation, so we need a fresh id.
+            nm.deleteNotificationChannel("alerts_v1")
 
             // IMPORTANCE_MIN: no status-bar icon, no sound/vibration, collapsed at the
             // bottom of the shade, no app badge — a required-but-unobtrusive FGS notice.
@@ -91,9 +93,9 @@ object NotificationHelper {
             nm.createNotificationChannel(NotificationChannel(
                 ALERTS_CHANNEL,
                 "Alerts",
-                NotificationManager.IMPORTANCE_DEFAULT
+                NotificationManager.IMPORTANCE_HIGH   // heads-up + sound for a newly cracked password
             ).apply {
-                description = "Cracked passwords and connection alerts"
+                description = "Cracked passwords"
                 setShowBadge(true)
             })
         }
@@ -108,9 +110,9 @@ object NotificationHelper {
             .setContentTitle("🔓 Cracked $net")
             .setContentText("password: $password")
             .setStyle(NotificationCompat.BigTextStyle().bigText("$net\npassword: $password"))
-            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            .setSmallIcon(com.wsvdmeer.pwncompanion.R.drawable.ic_stat_pwn)
             .setColor(ContextCompat.getColor(context, R.color.phosphor_green))
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setGroup(GROUP_ALERTS)
@@ -123,23 +125,6 @@ object NotificationHelper {
         postAlertsSummary(context)
     }
 
-    /** The Bluetooth link to the Pwnagotchi came up. */
-    fun notifyConnected(context: Context, name: String) {
-        val n = NotificationCompat.Builder(context, ALERTS_CHANNEL)
-            .setContentTitle("Connected")
-            .setContentText("Linked to ${name.ifBlank { "the Pwnagotchi" }}")
-            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
-            .setColor(ContextCompat.getColor(context, R.color.phosphor_green))
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setAutoCancel(true)
-            .setCategory(NotificationCompat.CATEGORY_STATUS)
-            .setGroup(GROUP_ALERTS)
-            .setContentIntent(mainActivityIntent(context))
-            .build()
-        postSafely(context, NOTIFICATION_ID_CONNECTED, n)
-        postAlertsSummary(context)
-    }
-
     /**
      * The group summary that makes Android bundle the alert notifications under one
      * "PwnCompanion" header (children stack inside it). Children carry the sound/alert
@@ -148,7 +133,7 @@ object NotificationHelper {
     private fun postAlertsSummary(context: Context) {
         val summary = NotificationCompat.Builder(context, ALERTS_CHANNEL)
             .setContentTitle("PwnCompanion")
-            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            .setSmallIcon(com.wsvdmeer.pwncompanion.R.drawable.ic_stat_pwn)
             .setColor(ContextCompat.getColor(context, R.color.phosphor_green))
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
@@ -218,7 +203,7 @@ object NotificationHelper {
         val builder = NotificationCompat.Builder(context, NETWORK_SERVICE_CHANNEL)
             .setContentTitle(heading)
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            .setSmallIcon(com.wsvdmeer.pwncompanion.R.drawable.ic_stat_pwn)
             .setColor(ContextCompat.getColor(context, R.color.phosphor_green))
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setShowWhen(false)
@@ -284,7 +269,7 @@ object NotificationHelper {
         return NotificationCompat.Builder(context, LOCATION_SERVICE_CHANNEL)
             .setContentTitle("PwnCompanion · GPS")
             .setContentText(contentText)
-            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setSmallIcon(com.wsvdmeer.pwncompanion.R.drawable.ic_stat_pwn)
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setShowWhen(false)
             .setOngoing(true)
@@ -304,7 +289,7 @@ object NotificationHelper {
         NotificationCompat.Builder(context, NOTIFICATION_CHANNEL)
             .setContentTitle(title)
             .setContentText(message)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(com.wsvdmeer.pwncompanion.R.drawable.ic_stat_pwn)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
 
