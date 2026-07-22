@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Near-black CRT background -->
+    <path
+        android:fillColor="#030504"
+        android:pathData="M0,0h108v108h-108z" />
+    <!-- Faint phosphor grid -->
+    <path android:strokeColor="#143DFF6E" android:strokeWidth="0.8" android:pathData="M18,0L18,108" />
+    <path android:strokeColor="#143DFF6E" android:strokeWidth="0.8" android:pathData="M36,0L36,108" />
+    <path android:strokeColor="#143DFF6E" android:strokeWidth="0.8" android:pathData="M54,0L54,108" />
+    <path android:strokeColor="#143DFF6E" android:strokeWidth="0.8" android:pathData="M72,0L72,108" />
+    <path android:strokeColor="#143DFF6E" android:strokeWidth="0.8" android:pathData="M90,0L90,108" />
+    <path android:strokeColor="#143DFF6E" android:strokeWidth="0.8" android:pathData="M0,18L108,18" />
+    <path android:strokeColor="#143DFF6E" android:strokeWidth="0.8" android:pathData="M0,36L108,36" />
+    <path android:strokeColor="#143DFF6E" android:strokeWidth="0.8" android:pathData="M0,54L108,54" />
+    <path android:strokeColor="#143DFF6E" android:strokeWidth="0.8" android:pathData="M0,72L108,72" />
+    <path android:strokeColor="#143DFF6E" android:strokeWidth="0.8" android:pathData="M0,90L108,90" />
+</vector>

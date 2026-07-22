@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Dark terminal theme. Was Material.Light (white launch flash) — now dark with a
+         near-black window background so cold start reads as the console, not a white page.
+         windowSplashScreen* drive the Android 12+ system splash (ignored on older APIs,
+         which fall back to the windowBackground below). -->
+    <style name="Theme.PwnCompanion" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@drawable/splash_bg</item>
+        <item name="android:statusBarColor">@color/crt_black</item>
+        <item name="android:navigationBarColor">@color/crt_black</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowSplashScreenBackground">@color/crt_black</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+    </style>
+</resources>

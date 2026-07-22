@@ -1,0 +1,29 @@
+*.iml
+.gradle
+/local.properties
+# IDE config is machine-local (and can carry device serials / local paths) — don't publish it.
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Local tooling/agent config (machine-specific) — but keep shared skills/commands
+.claude/settings.local.json
+
+# Kotlin compiler caches
+.kotlin/
+
+# Python cruft + the local one-off screenshot-redaction helper (has device-specific coords)
+__pycache__/
+/redact.py
+
+# Large model assets are downloaded at runtime, not committed
+/app/src/main/assets/models/*.gguf
+.ghtoken
+# Screenshots are ignored by default (raw captures often contain IP / SSID / GPS / the
+# device name). ONLY the vetted, redacted/cropped README shots under docs/ are tracked.
+*.png
+!docs/*.png
