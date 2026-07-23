@@ -13,7 +13,7 @@ A [Pwnagotchi](https://github.com/jayofelony/pwnagotchi) is a pocket gadget (usu
 - **geotags** every captured handshake and plots them on a **map**;
 - **decides where to hunt next** — a phone-side advisor ranks Wi-Fi channels by real yield + live client density and steers the device there, so it catches *more* handshakes;
 - gives the pet a genuine **personality voice** — a curated, franchise-flavored corpus with live data woven in, spliced onto the pwnagotchi's own e-ink screen;
-- closes the loop by **cracking** captured handshakes (via wpa-sec) and showing the recovered passwords.
+- closes the loop by **cracking** captured handshakes — server-side via wpa-sec, or **on-phone** (offline, pure-Kotlin PMKID) — and showing the recovered passwords.
 
 The guiding idea: **move the thinking to the phone** (which has compute, GPS, and storage) and leave the Pi lean, just hunting. See ["Why the brain lives on the phone"](#why-the-brain-lives-on-the-phone-not-the-pi) below.
 
@@ -57,7 +57,7 @@ Everything rides the one Bluetooth PAN link. The phone also shares its **interne
 | 📶 WiFi events | `network_event` | handshake captured / association / deauth / idle — each tagged with the real **channel + BSSID** |
 | 📊 Per-channel stats | `autotune_stats` | handshakes / deauths / associations + peak AP & client density per channel (the steering ground truth) |
 | 🌡 Telemetry | `device_telemetry` | temperature, CPU, memory, RL **reward**, AP/client/peer counts, mood counters — full per-epoch in AUTO, plus a lightweight temp/cpu/mem push every ~12 s in any mode |
-| 📍 Capture log | `capture_history` | geolocated handshakes (paired with `.gps.json`), each graded for **crackability** (eapol/pmkid/partial), plus the raw file count |
+| 📍 Capture log | `capture_history` | geolocated handshakes (paired with `.gps.json`), each graded for **crackability** (eapol/pmkid/partial) with its hashcat-**22000 hash** (for on-phone cracking), plus the raw file count |
 | 🔓 Cracked | `cracked` | wpa-sec results (BSSID → password), on connect + every ~2 min |
 | 🙂 Emotions | (in `status`) | the device's own mood events — grateful / bored / sad / angry / excited / lonely |
 
@@ -232,7 +232,7 @@ There is **no language model**. The voice is a **curated per-franchise corpus** 
 - **channel steering** — the UCB1 bandit above
 - **the personality tuner** — context policy + hill-climb on `min_rssi` / TTLs / recon
 - **the advisor ranking** — `HuntAdvisor` scores the channels; the voice only reflects the winner
-- **handshake crackability** (`hcxpcapngtool`) and **cracking** (`wpa-sec`)
+- **handshake crackability** (`hcxpcapngtool`) and **cracking** — server-side (`wpa-sec`) or **on-phone** (pure-Kotlin PMKID, offline)
 
 ### It re-implements the AI jayofelony removed
 
@@ -290,16 +290,34 @@ On connect, the plugin scans the handshake directory and pairs each `<ssid>_<bss
 
 Tapping in opens a full **`[ captures ]` detail** with a searchable list and a **pixel map** of where handshakes were caught. It fetches dark [CARTO](https://carto.com/) basemap tiles for the capture area and renders them as a **pixel-perfect square grid** (drawn in a Compose `Canvas` at integer cell sizes, auto-contrast-normalised): the street network shows as muted **grey** squares, each catch as a bright **green** square, and your current position as an **orange** one. Tiles are cached on disk; with no network it falls back to a pure-ASCII block heatmap so there's always a map. © OpenStreetMap © CARTO.
 
-## Handshake cracking (wpa-sec)
+## Handshake cracking (wpa-sec + on-phone)
 
 A handshake only *counts* once it's cracked, so each capture is graded on-device by **`hcxpcapngtool`**:
 
 - **crackable** — a PMKID or a full EAPOL 4-way handshake (yields a hash)
 - **partial** — an incomplete grab (e.g. only an M1 frame); can never be cracked
 
-The `[ captures ]` screen tags each catch and shows a `cracked · crackable · partial` split (filterable with `[ ] cracked`). If **wpa-sec** is enabled, the plugin uploads crackable handshakes and downloads results hourly to `wpa-sec.cracked.potfile`; the app matches passwords to captures by BSSID, tags them **cracked** with the password inline, and the pet gloats in-character when a *new* one lands. A **cracking** status row shows whether wpa-sec is on **and whether the service is reachable** (the Pi health-checks it — wpa-sec goes down sometimes). Cracked/connect events also fire **notifications**.
+The `[ captures ]` screen tags each catch and shows a `cracked · crackable · partial` split (filter with `[ ] crackable` / `[ ] cracked`). There are two ways to actually crack — a free server, or the phone itself.
+
+### wpa-sec (server-side)
+
+If **wpa-sec** is enabled, the plugin uploads crackable handshakes and downloads results hourly to `wpa-sec.cracked.potfile`; the app matches passwords to captures by BSSID, tags them **cracked** with the password inline, and the pet gloats in-character when a *new* one lands. A **cracking** status row shows whether wpa-sec is on **and whether the service is reachable** (the Pi health-checks it — wpa-sec goes down sometimes). Cracked/connect events also fire **notifications**.
 
 > Cracking is server-side against wordlists, so only weak/dictionary passwords fall — strong random ones won't. Only handshakes captured *after* wpa-sec is enabled auto-upload; an existing backlog has to be submitted once.
+
+### On-phone (offline, no server)
+
+You can also crack **on the phone itself** — no server, no account, works offline. The plugin distills each capture to a hashcat-`22000` line (via `hcxpcapngtool`) and sends it up alongside the capture; PMKID captures then show a bright **`crack ▸`** tag. Tap one and the phone cracks it directly:
+
+- **Pure-Kotlin WPA2** — `PMK = PBKDF2-HMAC-SHA1(passphrase, ESSID, 4096)` → `PMKID = HMAC-SHA1(PMK, "PMK Name" ‖ AP ‖ STA)`, checked against each candidate. No native code, no model, verified against a reference vector in unit tests.
+- **Wordlist** — pwncrack's `default.gz` (**~655 K** WPA-valid, 8–63-char candidates), downloaded once to app storage and reused offline. It's WPA-tuned, so its hit-rate per candidate is far higher than a general dump like rockyou — which is the whole reason it stays small and finishes in hours, not days.
+- **Live progress** — a banner shows `tried / total · rate · ETA` over a real progress bar; the crack runs across your CPU cores.
+- **Queue** — tap several `crack ▸` rows and they run one after another (`cracking X · N queued`, with skip / stop). Serial by design: cracking is pure PBKDF2 already fanned across cores, so two at once would only halve each other's speed.
+- **Survives lock** — a foreground service keeps a multi-hour crack alive with the screen off (Doze / background-CPU throttling would otherwise stall it), showing progress in its notification.
+- **Resume** — the position is checkpointed continuously, so an interrupted crack (process kill, reboot, unplug, cancel) picks up where it left off instead of restarting from candidate 0.
+- **Gentle power knobs** (on by default, in a `power` chip row) — **easy cpu** (cap workers at 2), **charger only** (pause while unplugged, auto-resume on replug), **stop <15%** (pause on low battery). Cracking is genuinely heavy — a hot phone, real battery draw, ~4 h for the full list — so these keep it civil; it's best run plugged in with the screen off.
+
+> On-phone cracking is **PMKID-only for now** (EAPOL / `WPA*02` is the next step). Like wpa-sec it's a dictionary attack — weak/common passwords fall, strong random ones won't — but it's fully local, private, and needs no internet or wpa-sec account.
 
 ## Device Vitals
 
@@ -327,7 +345,7 @@ The `pwn-companion.py` plugin implements the following pwnagotchi event hooks:
 | `on_ui_setup` / `on_ui_update` | Show connection status + GPS on e-ink |
 | `on_bt_tether_connected` | Start UDP discovery + WebSocket client |
 | `on_bt_tether_disconnected` | Stop services **non-blocking** (fire-and-forget) so a BT drop never freezes the pwnagotchi main loop |
-| `on_handshake` | Save GPS `.gps.json` sidecar, push live capture entry, fire handshake AI event **with the capture's real channel + BSSID** |
+| `on_handshake` | Save GPS `.gps.json` sidecar, write the `.22000` hash sidecar (for on-phone cracking), push live capture entry, fire handshake AI event **with the capture's real channel + BSSID** |
 | `on_association` | Fire network_discovered AI event |
 | `on_deauthentication` | Fire anomaly AI event |
 | `on_epoch` | Accumulate channel stats (+ AP/client density), push `autotune_stats` + `device_telemetry` |
@@ -345,7 +363,7 @@ On connect, the plugin also scans the handshake directory and sends a `capture_h
 | `network_event` | Handshake / association / deauth / idle events (drive the AI); handshake + discovery events carry `channel` + `bssid` |
 | `autotune_stats` | Per-channel handshake/deauth/assoc + AP/client density |
 | `device_telemetry` | Vitals + `reward` + density + mood counters (per epoch in AUTO); also a lightweight `temperature`/`cpu_load`/`mem_usage` push every ~12 s in any mode |
-| `capture_history` | Geolocated capture log + per-capture crackability (`quality`: eapol/pmkid/partial) |
+| `capture_history` | Geolocated capture log + per-capture crackability (`quality`: eapol/pmkid/partial) + hashcat-`22000` hash (on-phone cracking) |
 | `cracked` | wpa-sec results (`bssid` → `password`), matched to captures in-app |
 
 App → device commands (`type: command`): `restart_auto` / `restart_manual` (mode), and `set_channel_priority` (focus bettercap recon on the app's learned-best channels).
