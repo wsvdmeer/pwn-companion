@@ -270,7 +270,7 @@ Honest take: evilsocket's was "more AI" in the machine-learning sense — a real
 
 ### It learns over its lifetime
 
-The learned baseline is **persisted to disk** (DataStore), so the companion's disposition survives app restarts and genuinely develops over time: a Pwnagotchi that captures constantly trends permanently more confident and cocky, while one that mostly idles trends bored and low-energy. Recent activity, best channel, and time-since-last-capture are also fed into the prompt as compact memory, so responses reference what it has actually learned.
+The learned baseline is **persisted to disk** (DataStore), so the companion's disposition survives app restarts and genuinely develops over time: a Pwnagotchi that captures constantly trends permanently more confident and cocky, while one that mostly idles trends bored and low-energy. Recent activity, best channel, and time-since-last-capture also feed the disposition and the data-slot recap/status lines, so what the pet says reflects what it has actually learned.
 
 ### Fed by the device's own telemetry
 
@@ -325,7 +325,9 @@ The `[ vitals ]` section surfaces live telemetry as **block-bar gauges** (`cpu �
 
 ## Live-pet notification
 
-Both foreground services (WebSocket + GPS) share a **single** ongoing notification (kept at MIN importance so it stays quiet). Expand it and it becomes a glanceable widget: the Pwnagotchi's **e-ink face** as the image plus a live stats line — `pwnagotchi · 169 caught · 4 clients · 49°C · gps 0.00,0.00` — tinted phosphor green.
+The two always-on foreground services (WebSocket + GPS) share a **single** ongoing notification (kept at MIN importance so it stays quiet). Expand it and it becomes a glanceable widget: the Pwnagotchi's **e-ink face** as the image plus a live stats line — `pwnagotchi · 169 caught · 4 clients · 49°C · gps 0.00,0.00` — tinted phosphor green.
+
+While an **on-phone crack** is running, a third (transient) foreground service shows its own low-priority progress notification — `Cracking <ssid> · N queued` over a progress bar, with a **Stop** action — and clears itself when the queue drains.
 
 Separately, an **Alerts** channel (normal importance) fires event notifications: **link up** to the Pwnagotchi (throttled against reconnect churn) and one per **newly cracked** network showing its SSID + recovered password. The connect-time backlog is seeded silently so it never floods.
 
@@ -366,7 +368,7 @@ On connect, the plugin also scans the handshake directory and sends a `capture_h
 | `capture_history` | Geolocated capture log + per-capture crackability (`quality`: eapol/pmkid/partial) + hashcat-`22000` hash (on-phone cracking) |
 | `cracked` | wpa-sec results (`bssid` → `password`), matched to captures in-app |
 
-App → device commands (`type: command`): `restart_auto` / `restart_manual` (mode), and `set_channel_priority` (focus bettercap recon on the app's learned-best channels).
+App → device commands (`type: command`): `restart_auto` / `restart_manual` (mode), `set_channel_priority` (focus bettercap recon on the app's learned-best channels), `set_param` (clamped auto-tuning knobs), and `set_voice_pool` (fresh in-character e-ink lines).
 
 ---
 
