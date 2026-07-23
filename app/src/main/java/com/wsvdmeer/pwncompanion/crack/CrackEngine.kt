@@ -2,6 +2,7 @@ package com.wsvdmeer.pwncompanion.crack
 
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.BatteryManager
 import android.os.Build
 import android.util.Log
@@ -268,26 +269,36 @@ object CrackEngine {
     }
 
     /** Worker count, honouring the gentle knobs: cap at 2 in easy-CPU mode, else half on battery
-     * and all-but-one while charging. */
+     * and all-but-one while plugged in. */
     private fun workerCores(context: Context): Int {
         val cpus = Runtime.getRuntime().availableProcessors()
         if (CrackSettings.gentleCpu.value) return 2.coerceIn(1, cpus)
-        return if (isCharging(context)) (cpus - 1).coerceIn(1, 8) else (cpus / 2).coerceIn(1, 8)
+        return if (isPlugged(context)) (cpus - 1).coerceIn(1, 8) else (cpus / 2).coerceIn(1, 8)
     }
 
-    private fun isCharging(context: Context): Boolean = runCatching {
-        (context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager).isCharging
+    /**
+     * "On a charger" = plugged in (AC/USB/wireless), NOT "battery actively charging". Many phones
+     * report status != CHARGING while plugged (topped off, or throttled under a heavy CPU load),
+     * so BatteryManager.isCharging would wrongly say "waiting for charger" on a charger. We read
+     * the sticky battery broadcast's plugged flag instead.
+     */
+    private fun isPlugged(context: Context): Boolean = runCatching {
+        val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        (intent?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0) != 0
     }.getOrDefault(false)
+
+    private fun batteryLevel(context: Context): Int = runCatching {
+        (context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager)
+            .getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+    }.getOrDefault(100)
 
     /** Why cracking is currently blocked by the power policy, or null if it may run. */
     private fun blockReason(context: Context): String? {
         CrackSettings.ensureLoaded(context)
-        val bm = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
-        if (runCatching { bm.isCharging }.getOrDefault(false)) return null   // plugged in
+        if (isPlugged(context)) return null   // on a charger → nothing to hold for
         if (CrackSettings.chargerOnly.value) return "waiting for charger"
         if (CrackSettings.lowBatteryStop.value) {
-            val level = runCatching { bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) }
-                .getOrDefault(100)
+            val level = batteryLevel(context)
             if (level in 0..CrackSettings.LOW_PCT) return "battery $level% - paused"
         }
         return null
