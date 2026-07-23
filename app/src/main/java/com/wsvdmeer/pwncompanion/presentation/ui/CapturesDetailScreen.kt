@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.sp
 import com.wsvdmeer.pwncompanion.crack.WpaCracker
 import com.wsvdmeer.pwncompanion.models.CaptureEntry
 import com.wsvdmeer.pwncompanion.models.GpsData
+import com.wsvdmeer.pwncompanion.presentation.CrackState
 import com.wsvdmeer.pwncompanion.presentation.MainViewModel
 import com.wsvdmeer.pwncompanion.presentation.theme.TerminalMono
 import com.wsvdmeer.pwncompanion.utils.GeoPoint
@@ -82,9 +83,11 @@ fun CapturesDetailScreen(
 
     val captures by viewModel.captures.collectAsState()
     val gps by viewModel.gpsData.collectAsState()
+    val crackState by viewModel.crackState.collectAsState()
     var query by remember { mutableStateOf("") }
     var geoOnly by remember { mutableStateOf(false) }
     var crackedOnly by remember { mutableStateOf(false) }
+    var crackableOnly by remember { mutableStateOf(false) }
 
     val primary = MaterialTheme.colorScheme.primary
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
@@ -94,11 +97,12 @@ fun CapturesDetailScreen(
     val crackable = remember(captures) { captures.count { it.isCrackable } }
     val partial = remember(captures) { captures.count { it.isPartial } }
     val cracked = remember(captures) { captures.count { it.isCracked } }
-    val filtered = remember(captures, query, geoOnly, crackedOnly) {
+    val filtered = remember(captures, query, geoOnly, crackedOnly, crackableOnly) {
         captures
             .filter {
                 (!geoOnly || it.isGeolocated) &&
                 (!crackedOnly || it.isCracked) &&
+                (!crackableOnly || WpaCracker.isCrackablePmkid(it.hash22000)) &&
                 (query.isBlank() || it.ssid.contains(query, ignoreCase = true))
             }
             .sortedByDescending { it.timestamp ?: 0L }
@@ -158,43 +162,28 @@ fun CapturesDetailScreen(
             ConsoleRuleLocal()
         }
 
-        // ── search + geo filter ─────────────────────────────────────────────
+        // ── search + filters ────────────────────────────────────────────────
         Spacer(Modifier.height(6.dp))
+        // Bordered monospace search field (full width).
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, MaterialTheme.colorScheme.outline)
+                .padding(horizontal = 8.dp, vertical = 6.dp)
+        ) {
+            Text("/", color = dim, fontSize = 12.sp, fontFamily = TerminalMono)
+            Spacer(Modifier.width(6.dp))
+            SearchField(query, onQuery = { query = it }, primary = primary, dim = dim)
+        }
+        Spacer(Modifier.height(6.dp))
+        // Filter chips: geo · crackable (on-phone PMKID) · cracked.
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Bordered monospace search field.
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .border(1.dp, MaterialTheme.colorScheme.outline)
-                    .padding(horizontal = 8.dp, vertical = 6.dp)
-            ) {
-                Text("/", color = dim, fontSize = 12.sp, fontFamily = TerminalMono)
-                Spacer(Modifier.width(6.dp))
-                SearchField(query, onQuery = { query = it }, primary = primary, dim = dim)
-            }
-            Text(
-                if (geoOnly) "[x] geo" else "[ ] geo",
-                color = if (geoOnly) primary else dim,
-                fontSize = 12.sp,
-                fontFamily = TerminalMono,
-                modifier = Modifier
-                    .border(1.dp, (if (geoOnly) primary else MaterialTheme.colorScheme.outline))
-                    .clickable { geoOnly = !geoOnly }
-                    .padding(horizontal = 8.dp, vertical = 6.dp)
-            )
-            Text(
-                if (crackedOnly) "[x] cracked" else "[ ] cracked",
-                color = if (crackedOnly) primary else dim,
-                fontSize = 12.sp,
-                fontFamily = TerminalMono,
-                modifier = Modifier
-                    .border(1.dp, (if (crackedOnly) primary else MaterialTheme.colorScheme.outline))
-                    .clickable { crackedOnly = !crackedOnly }
-                    .padding(horizontal = 8.dp, vertical = 6.dp)
-            )
+            FilterChip("geo", geoOnly, primary, dim) { geoOnly = !geoOnly }
+            FilterChip("crackable", crackableOnly, primary, dim) { crackableOnly = !crackableOnly }
+            FilterChip("cracked", crackedOnly, primary, dim) { crackedOnly = !crackedOnly }
         }
         Spacer(Modifier.height(6.dp))
         Text(
@@ -221,10 +210,28 @@ fun CapturesDetailScreen(
         }
         Spacer(Modifier.height(4.dp))
 
+        // ── on-phone crack progress (Phase 4) ────────────────────────────────
+        if (crackState !is CrackState.Idle) {
+            Spacer(Modifier.height(2.dp))
+            CrackBanner(
+                state = crackState,
+                onCancel = { viewModel.cancelCrack() },
+                onDismiss = { viewModel.dismissCrack() },
+            )
+            Spacer(Modifier.height(6.dp))
+        }
+
         // ── full list ───────────────────────────────────────────────────────
+        val idle = crackState is CrackState.Idle
         LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
             items(filtered, key = { it.key }) { c ->
-                CaptureDetailRow(c, primary, dim, onSurface)
+                // Rows with an on-phone-crackable PMKID become tappable when nothing else
+                // is cracking — a tap starts the crack.
+                val canCrack = idle && !c.isCracked && WpaCracker.isCrackablePmkid(c.hash22000)
+                CaptureDetailRow(
+                    c, primary, dim, onSurface,
+                    onCrack = if (canCrack) ({ viewModel.startCrack(c) }) else null,
+                )
             }
             item { Spacer(Modifier.height(24.dp)) }
         }
@@ -233,8 +240,19 @@ fun CapturesDetailScreen(
 
 /** One capture row: geo marker, SSID, coords (if any), relative age. */
 @Composable
-private fun CaptureDetailRow(c: CaptureEntry, primary: Color, dim: Color, onSurface: Color) {
-    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+private fun CaptureDetailRow(
+    c: CaptureEntry,
+    primary: Color,
+    dim: Color,
+    onSurface: Color,
+    onCrack: (() -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (onCrack != null) Modifier.clickable { onCrack() } else Modifier)
+            .padding(vertical = 3.dp)
+    ) {
         Text(
             if (c.isGeolocated) "⌖ " else "· ",
             color = if (c.isGeolocated) primary else dim,
@@ -289,6 +307,134 @@ private fun CaptureDetailRow(c: CaptureEntry, primary: Color, dim: Color, onSurf
             relativeAgeLocal(c.timestamp),
             color = dim, fontSize = 11.sp, fontFamily = TerminalMono
         )
+    }
+}
+
+/**
+ * On-phone crack status banner (Phase 4): download progress, live crack progress with a
+ * terminal-style bar + rate + ETA and a cancel, or the finished result.
+ */
+@Composable
+private fun CrackBanner(state: CrackState, onCancel: () -> Unit, onDismiss: () -> Unit) {
+    val primary = MaterialTheme.colorScheme.primary
+    val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    val error = MaterialTheme.colorScheme.error
+    val green = Color(0xFF3DFF6E)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, MaterialTheme.colorScheme.outline)
+            .background(Color(0xFF02060A))
+            .padding(8.dp)
+    ) {
+        when (state) {
+            is CrackState.Downloading -> {
+                Text(
+                    "↓ downloading wordlist… ${(state.pct * 100).roundToInt()}%",
+                    color = dim, fontSize = 12.sp, fontFamily = TerminalMono
+                )
+                Spacer(Modifier.height(5.dp))
+                CrackBar(state.pct, primary)
+            }
+            is CrackState.Running -> {
+                val frac = if (state.total > 0) state.tried.toFloat() / state.total else 0f
+                val eta = etaLocal(state.tried, state.total, state.perSec)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(
+                        "⚙ cracking ${state.ssid}",
+                        color = primary, fontWeight = FontWeight.Bold, fontSize = 12.sp, fontFamily = TerminalMono,
+                        maxLines = 1, modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        "[ cancel ]",
+                        color = error, fontSize = 12.sp, fontFamily = TerminalMono,
+                        modifier = Modifier.clickable { onCancel() }
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "${state.tried} / ${state.total} (${(frac * 100).roundToInt()}%) · ${state.perSec}/s · eta $eta",
+                    color = dim, fontSize = 11.sp, fontFamily = TerminalMono
+                )
+                Spacer(Modifier.height(5.dp))
+                CrackBar(frac, primary)
+            }
+            is CrackState.Done -> {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(
+                        "✓ cracked ${state.ssid} · ${state.password}",
+                        color = green, fontWeight = FontWeight.Bold, fontSize = 12.sp, fontFamily = TerminalMono,
+                        maxLines = 1, modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        "[ ok ]", color = dim, fontSize = 12.sp, fontFamily = TerminalMono,
+                        modifier = Modifier.clickable { onDismiss() }
+                    )
+                }
+            }
+            is CrackState.Failed -> {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(
+                        "✗ ${state.ssid}: ${state.reason}",
+                        color = error, fontSize = 12.sp, fontFamily = TerminalMono,
+                        maxLines = 1, modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        "[ ok ]", color = dim, fontSize = 12.sp, fontFamily = TerminalMono,
+                        modifier = Modifier.clickable { onDismiss() }
+                    )
+                }
+            }
+            CrackState.Idle -> {}
+        }
+    }
+}
+
+/** A terminal-style toggle chip: `[x] label` when on, `[ ] label` when off. */
+@Composable
+private fun FilterChip(label: String, on: Boolean, primary: Color, dim: Color, onToggle: () -> Unit) {
+    Text(
+        if (on) "[x] $label" else "[ ] $label",
+        color = if (on) primary else dim,
+        fontSize = 12.sp,
+        fontFamily = TerminalMono,
+        modifier = Modifier
+            .border(1.dp, if (on) primary else MaterialTheme.colorScheme.outline)
+            .clickable { onToggle() }
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+    )
+}
+
+/** A chunky terminal-style progress bar (filled cells vs dim cells). */
+@Composable
+private fun CrackBar(fraction: Float, color: Color) {
+    val cells = 24
+    val filled = (fraction.coerceIn(0f, 1f) * cells).roundToInt()
+    val off = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.22f)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        repeat(cells) { i ->
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(8.dp)
+                    .background(if (i < filled) color else off)
+            )
+        }
+    }
+}
+
+/** ETA string from remaining candidates and current rate. */
+private fun etaLocal(tried: Long, total: Long, perSec: Long): String {
+    if (perSec <= 0L) return "…"
+    val remaining = (total - tried).coerceAtLeast(0L)
+    val secs = remaining / perSec
+    return when {
+        secs < 60 -> "${secs}s"
+        secs < 3600 -> "${secs / 60}m${secs % 60}s"
+        else -> "${secs / 3600}h${(secs % 3600) / 60}m"
     }
 }
 
