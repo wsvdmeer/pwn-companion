@@ -72,6 +72,18 @@ Everything rides the one Bluetooth PAN link. The phone also shares its **interne
 | 🗣 Device voice | `set_voice_pool` | fresh in-character lines per pwnagotchi voice category; the plugin speaks them in the e-ink bubble instead of the stock repeating quips (falls back to stock when disconnected) |
 | ⏯ Mode control | `restart_auto` / `restart_manual` | flip the pet between hunting and paused |
 
+### The connection, in detail
+
+Everything rides **one Bluetooth PAN link** with a **single WebSocket** on top — no cloud, no pairing server, no fixed IPs to configure:
+
+1. **Transport (Bluetooth PAN).** You enable Bluetooth tethering on the phone and pair the Pwnagotchi; Android's `bt-tether` brings up a `bt-pan` / `bnep0` interface with a private IP (typically `192.168.44.x`). Because it's *tethering*, the phone also **shares its internet** to the Pi over that same link — which is what lets wpa-sec upload/download.
+2. **The phone is the server.** The app runs an embedded **WebSocket server** bound to its `bnep0` IP on **port 8081**. The phone is the server (not the Pi) on purpose: it owns the stable listening endpoint, the compute, and the storage, so the Pi stays a thin client that just streams and obeys. If the phone disconnects, the Pi simply keeps hunting on its own — no dependency.
+3. **Discovery (no hardcoded IPs).** The `bnep0` address Android hands out isn't predictable, so the app **broadcasts a UDP announcement on port 8888 every 5 s** carrying its `ws://<bnep0-ip>:8081` URL. The plugin listens for that beacon and dials the WebSocket — so it just works whatever IP comes up, with nothing to configure.
+4. **The session.** Once connected, both ends exchange **JSON messages tagged by a `type` field** (the two tables above). On connect the plugin sends its `capture_history` backlog + status; the app seeds cracked/alert state silently so a reconnect never floods you with notifications.
+5. **Resilience (the BT radio is flaky).** The Pi Zero shares one 2.4 GHz radio between Wi-Fi and Bluetooth, so the tether can wedge. The link is hardened for it: **WebSocket keepalive** pings catch a silently-dropped tether in seconds, every send is **timeout-bounded** so a wedged socket never blocks, disconnect teardown is **non-blocking** so a drop can't freeze the Pi's main loop, and the app keeps re-broadcasting UDP so the plugin **auto-reconnects** the moment the link returns. The phone side is kept alive by foreground services so Android won't kill it mid-session. (See [Troubleshooting](#troubleshooting--connection-drops--needing-frequent-reboots) for the hardware limitation this works around.)
+
+That client/server split *is* the design: it's what lets the **brain live on the phone** — the Pi transmits and captures, the phone does the thinking (bandit steering, the tuner, personality, cracking) and sends only small, reversible hints back down. See [Why the brain lives on the phone](#why-the-brain-lives-on-the-phone-not-the-pi).
+
 ---
 
 ## Setup
