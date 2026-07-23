@@ -319,6 +319,8 @@ You can also crack **on the phone itself** — no server, no account, works offl
 
 > On-phone cracking is **PMKID-only for now** (EAPOL / `WPA*02` is the next step). Like wpa-sec it's a dictionary attack — weak/common passwords fall, strong random ones won't — but it's fully local, private, and needs no internet or wpa-sec account.
 
+> ⚠️ **Only crack handshakes from networks you own or are explicitly authorized to test.** Cracking others' Wi-Fi is illegal in most jurisdictions — see the [responsible-use note](#pwncompanion) at the top.
+
 ## Device Vitals
 
 The `[ vitals ]` section surfaces live telemetry as **block-bar gauges** (`cpu ██████···· 40%`): temperature, CPU load, memory, the RL `reward` (green when positive), plus environment density (APs / clients / peers). `temperature`/`cpu`/`mem` are pushed **every ~12 s regardless of mode** (a plugin timer), so the gauges stay live even while paused; `reward` and the mood counters only exist while hunting in AUTO. The same per-channel AP/client density also enriches the channel-learning model — so "best channel" reflects where the targets actually are, not just where handshakes happened to land.
