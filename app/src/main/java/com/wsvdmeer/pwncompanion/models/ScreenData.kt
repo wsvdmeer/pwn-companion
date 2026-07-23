@@ -202,6 +202,9 @@ data class CaptureEntry(
     // Cracked password, once wpa-sec returns one for this BSSID (applied app-side, not
     // sent by the capture message itself). Null = not cracked (yet).
     @SerialName("password")  val password: String? = null,
+    // hashcat-22000 line (WPA*01 PMKID / WPA*02 EAPOL) from the plugin's hcxpcapngtool, for
+    // on-phone cracking. Null when the grab isn't crackable or the tool was unavailable.
+    @SerialName("hash22000") val hash22000: String? = null,
 ) {
     /** Stable identity for de-duping across reconnects / live appends. */
     val key: String get() = if (bssid.isNotBlank()) bssid else "$ssid@$timestamp"

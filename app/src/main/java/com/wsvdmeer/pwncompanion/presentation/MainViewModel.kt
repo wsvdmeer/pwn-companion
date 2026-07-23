@@ -586,6 +586,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     appendLog("[*] captures :: ${allCaptures.size} logged")
                 }
                 _captures.value = allCaptures
+                // Phase 1 (on-phone cracking): confirm 22000 hashes are arriving from the plugin.
+                val withHash = allCaptures.count { !it.hash22000.isNullOrBlank() }
+                if (withHash > 0) Log.d(tag, "captures with 22000 hash: $withHash/${allCaptures.size}")
                 recomputeUntapped()   // a fresh catch may retire an untapped target
 
                 // Surface latest device telemetry (vitals / reward / mood).
