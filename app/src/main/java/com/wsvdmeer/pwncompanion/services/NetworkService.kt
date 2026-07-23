@@ -672,12 +672,15 @@ class NetworkService(private val context: Context) {
         if (incoming.isNullOrEmpty()) return existing
         val byKey = LinkedHashMap<String, com.wsvdmeer.pwncompanion.models.CaptureEntry>()
         existing.forEach { byKey[it.key] = it }
-        // Incoming wins on collision, BUT carry forward a cracked password the fresh
-        // record lacks (capture_history re-sends omit it), so reconnects don't wipe it.
+        // Incoming wins on collision, BUT carry forward a cracked password AND the 22000
+        // hash the fresh record lacks (a re-scan can omit either), so reconnects don't wipe them.
         incoming.forEach { inc ->
             val prev = byKey[inc.key]
-            byKey[inc.key] = if (prev?.password != null && inc.password == null)
-                inc.copy(password = prev.password) else inc
+            byKey[inc.key] = if (prev != null && (inc.password == null && prev.password != null ||
+                                                  inc.hash22000 == null && prev.hash22000 != null))
+                inc.copy(password = inc.password ?: prev.password,
+                         hash22000 = inc.hash22000 ?: prev.hash22000)
+            else inc
         }
         return byKey.values.sortedByDescending { it.timestamp ?: 0L }
     }

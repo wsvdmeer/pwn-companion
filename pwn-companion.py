@@ -872,6 +872,9 @@ class PwnCompanion(Plugin):
                 q = self._classify_pcap(filename, use_cache=False)
                 if q:
                     entry["quality"] = q
+                h = self._read_hash(filename)
+                if h:
+                    entry["hash22000"] = h
                 self._schedule_on_loop(
                     self._send_to_app({"type": "capture_history", "captures": [entry]}),
                     self.loop,
@@ -923,6 +926,18 @@ class PwnCompanion(Plugin):
                         quality = "pmkid"     # PMKID — also crackable
                     else:
                         quality = "partial"
+                    # Persist the hashcat-22000 line(s) alongside the pcap so the app can
+                    # crack it on-phone later (Phase 1: on-phone-cracking plumbing). Only
+                    # crackable grabs have a hash; keep every WPA* line (a pcap can hold more
+                    # than one AP), the app picks the one matching the capture's BSSID.
+                    if quality in ("eapol", "pmkid"):
+                        hashes = [ln.strip() for ln in data.splitlines() if ln.startswith("WPA*")]
+                        if hashes:
+                            try:
+                                with open(base + ".22000", "w") as hf:
+                                    hf.write("\n".join(hashes) + "\n")
+                            except OSError:
+                                pass
             finally:
                 try:
                     os.remove(out)
@@ -937,6 +952,32 @@ class PwnCompanion(Plugin):
             return quality
         except Exception:
             return None
+
+    def _read_hash(self, pcap_path):
+        """The cached hashcat-22000 hash for this pcap (crackable grabs only), or None.
+
+        Written by _classify_pcap when hcxpcapngtool distils a WPA*01/WPA*02 line. Sent to
+        the app so it can crack the handshake on-phone. If a pcap held several APs, prefer the
+        line whose AP-MAC matches the filename BSSID; else return the first.
+        """
+        base = pcap_path[:-len(".pcap")] if pcap_path.endswith(".pcap") else pcap_path
+        try:
+            with open(base + ".22000") as fp:
+                lines = [ln.strip() for ln in fp if ln.strip()]
+        except OSError:
+            return None
+        if not lines:
+            return None
+        # Filename is <ssid>_<bssid>.pcap; the 22000 AP-MAC (field 4) is the BSSID without
+        # separators. Match it if we can, so a multi-AP pcap picks the right hash.
+        fname = os.path.basename(base)
+        bssid = fname.rsplit("_", 1)[1].lower().replace(":", "") if "_" in fname else ""
+        if bssid:
+            for ln in lines:
+                parts = ln.split("*")
+                if len(parts) > 3 and parts[3].lower() == bssid:
+                    return ln
+        return lines[0]
 
     def _scan_capture_history(self, limit=300):
         """Scan the handshakes dir and build a capture log for the app.
@@ -982,6 +1023,9 @@ class PwnCompanion(Plugin):
                 q = self._classify_pcap(path)   # cached in <base>.q sidecar
                 if q:
                     entry["quality"] = q
+                h = self._read_hash(path)       # cached in <base>.22000 sidecar
+                if h:
+                    entry["hash22000"] = h
 
                 gps_path = os.path.join(directory, base + ".gps.json")
                 if os.path.isfile(gps_path):
