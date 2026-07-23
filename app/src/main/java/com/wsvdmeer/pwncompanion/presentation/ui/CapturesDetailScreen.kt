@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.wsvdmeer.pwncompanion.crack.WpaCracker
 import com.wsvdmeer.pwncompanion.models.CaptureEntry
 import com.wsvdmeer.pwncompanion.models.GpsData
 import com.wsvdmeer.pwncompanion.presentation.MainViewModel
@@ -257,16 +258,25 @@ private fun CaptureDetailRow(c: CaptureEntry, primary: Color, dim: Color, onSurf
                 )
             }
         }
-        // Status tag: cracked (has password) > crackable > partial.
+        // Status tag: cracked > ready-to-crack-on-phone (has a PMKID hash) > crackable > partial.
         when {
             c.isCracked -> Text(
                 "cracked",
                 color = Color(0xFF3DFF6E), fontWeight = FontWeight.Bold, fontSize = 10.sp,
                 fontFamily = TerminalMono, modifier = Modifier.padding(end = 8.dp)
             )
+            // We have the PMKID hash on the phone → crackable locally right now (Phase 4 will
+            // make this tappable + show a progress bar). Bright + arrow to read as actionable.
+            WpaCracker.isCrackablePmkid(c.hash22000) -> Text(
+                "crack ▸",
+                color = Color(0xFF3DFF6E), fontWeight = FontWeight.Bold, fontSize = 10.sp,
+                fontFamily = TerminalMono, modifier = Modifier.padding(end = 8.dp)
+            )
             c.isCrackable -> Text(
-                if (c.quality == "pmkid") "pmkid" else "crack",
-                color = Color(0xFF3DFF6E).copy(alpha = 0.7f), fontSize = 10.sp, fontFamily = TerminalMono,
+                // Crackable per quality, but no on-phone PMKID hash yet (EAPOL is Phase 3, or
+                // the hash hasn't arrived) — dimmer, not yet actionable.
+                if (c.quality == "pmkid") "pmkid" else "eapol",
+                color = Color(0xFF3DFF6E).copy(alpha = 0.6f), fontSize = 10.sp, fontFamily = TerminalMono,
                 modifier = Modifier.padding(end = 8.dp)
             )
             c.isPartial -> Text(
