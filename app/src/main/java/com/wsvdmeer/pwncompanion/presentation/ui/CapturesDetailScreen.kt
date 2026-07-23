@@ -55,7 +55,8 @@ import androidx.compose.ui.unit.sp
 import com.wsvdmeer.pwncompanion.crack.WpaCracker
 import com.wsvdmeer.pwncompanion.models.CaptureEntry
 import com.wsvdmeer.pwncompanion.models.GpsData
-import com.wsvdmeer.pwncompanion.presentation.CrackState
+import com.wsvdmeer.pwncompanion.crack.CrackEngine
+import com.wsvdmeer.pwncompanion.crack.CrackState
 import com.wsvdmeer.pwncompanion.presentation.MainViewModel
 import com.wsvdmeer.pwncompanion.presentation.theme.TerminalMono
 import com.wsvdmeer.pwncompanion.utils.GeoPoint
@@ -84,6 +85,7 @@ fun CapturesDetailScreen(
     val captures by viewModel.captures.collectAsState()
     val gps by viewModel.gpsData.collectAsState()
     val crackState by viewModel.crackState.collectAsState()
+    val crackQueue by viewModel.crackQueue.collectAsState()
     var query by remember { mutableStateOf("") }
     var geoOnly by remember { mutableStateOf(false) }
     var crackedOnly by remember { mutableStateOf(false) }
@@ -215,6 +217,8 @@ fun CapturesDetailScreen(
             Spacer(Modifier.height(2.dp))
             CrackBanner(
                 state = crackState,
+                queueCount = crackQueue.size,
+                onSkip = { viewModel.skipCrack() },
                 onCancel = { viewModel.cancelCrack() },
                 onDismiss = { viewModel.dismissCrack() },
             )
@@ -222,21 +226,36 @@ fun CapturesDetailScreen(
         }
 
         // ── full list ───────────────────────────────────────────────────────
-        val idle = crackState is CrackState.Idle
+        // Which capture (by BSSID) is cracking now, and which are queued — so rows can show
+        // "cracking" / "queued" and a tap can enqueue (or dequeue a queued one) even mid-crack.
+        val runningKey = (crackState as? CrackState.Running)?.let { CrackEngine.norm(it.bssid) }
+        val queuedKeys = remember(crackQueue) { crackQueue.map { CrackEngine.norm(it.bssid) }.toSet() }
         LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
             items(filtered, key = { it.key }) { c ->
-                // Rows with an on-phone-crackable PMKID become tappable when nothing else
-                // is cracking — a tap starts the crack.
-                val canCrack = idle && !c.isCracked && WpaCracker.isCrackablePmkid(c.hash22000)
-                CaptureDetailRow(
-                    c, primary, dim, onSurface,
-                    onCrack = if (canCrack) ({ viewModel.startCrack(c) }) else null,
-                )
+                val k = CrackEngine.norm(c.bssid)
+                val isRunning = runningKey == k
+                val isQueued = k in queuedKeys
+                val ready = !c.isCracked && WpaCracker.isCrackablePmkid(c.hash22000)
+                // Tap to queue; tap a queued row to remove it; the running row isn't tappable.
+                val onTap: (() -> Unit)? = when {
+                    !ready || isRunning -> null
+                    isQueued -> ({ viewModel.dequeueCrack(c) })
+                    else -> ({ viewModel.enqueueCrack(c) })
+                }
+                val rowState = when {
+                    isRunning -> RowCrack.RUNNING
+                    isQueued -> RowCrack.QUEUED
+                    else -> RowCrack.NONE
+                }
+                CaptureDetailRow(c, primary, dim, onSurface, onCrack = onTap, rowState = rowState)
             }
             item { Spacer(Modifier.height(24.dp)) }
         }
     }
 }
+
+/** Per-row crack status the list overlays onto a capture. */
+private enum class RowCrack { NONE, QUEUED, RUNNING }
 
 /** One capture row: geo marker, SSID, coords (if any), relative age. */
 @Composable
@@ -246,6 +265,7 @@ private fun CaptureDetailRow(
     dim: Color,
     onSurface: Color,
     onCrack: (() -> Unit)? = null,
+    rowState: RowCrack = RowCrack.NONE,
 ) {
     Row(
         modifier = Modifier
@@ -276,15 +296,26 @@ private fun CaptureDetailRow(
                 )
             }
         }
-        // Status tag: cracked > ready-to-crack-on-phone (has a PMKID hash) > crackable > partial.
+        // Status tag: cracked > running/queued (on-phone) > ready-to-crack > crackable > partial.
         when {
             c.isCracked -> Text(
                 "cracked",
                 color = Color(0xFF3DFF6E), fontWeight = FontWeight.Bold, fontSize = 10.sp,
                 fontFamily = TerminalMono, modifier = Modifier.padding(end = 8.dp)
             )
-            // We have the PMKID hash on the phone → crackable locally right now (Phase 4 will
-            // make this tappable + show a progress bar). Bright + arrow to read as actionable.
+            rowState == RowCrack.RUNNING -> Text(
+                "cracking…",
+                color = primary, fontWeight = FontWeight.Bold, fontSize = 10.sp,
+                fontFamily = TerminalMono, modifier = Modifier.padding(end = 8.dp)
+            )
+            rowState == RowCrack.QUEUED -> Text(
+                // Tap to remove from the queue.
+                "queued ✕",
+                color = Color(0xFFFFA533), fontSize = 10.sp,
+                fontFamily = TerminalMono, modifier = Modifier.padding(end = 8.dp)
+            )
+            // We have the PMKID hash on the phone → crackable locally right now. Tap the row to
+            // queue it. Bright + arrow to read as actionable.
             WpaCracker.isCrackablePmkid(c.hash22000) -> Text(
                 "crack ▸",
                 color = Color(0xFF3DFF6E), fontWeight = FontWeight.Bold, fontSize = 10.sp,
@@ -315,7 +346,13 @@ private fun CaptureDetailRow(
  * terminal-style bar + rate + ETA and a cancel, or the finished result.
  */
 @Composable
-private fun CrackBanner(state: CrackState, onCancel: () -> Unit, onDismiss: () -> Unit) {
+private fun CrackBanner(
+    state: CrackState,
+    queueCount: Int,
+    onSkip: () -> Unit,
+    onCancel: () -> Unit,
+    onDismiss: () -> Unit,
+) {
     val primary = MaterialTheme.colorScheme.primary
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     val error = MaterialTheme.colorScheme.error
@@ -330,7 +367,8 @@ private fun CrackBanner(state: CrackState, onCancel: () -> Unit, onDismiss: () -
         when (state) {
             is CrackState.Downloading -> {
                 Text(
-                    "↓ downloading wordlist… ${(state.pct * 100).roundToInt()}%",
+                    "↓ downloading wordlist… ${(state.pct * 100).roundToInt()}%" +
+                        if (queueCount > 0) " · $queueCount queued" else "",
                     color = dim, fontSize = 12.sp, fontFamily = TerminalMono
                 )
                 Spacer(Modifier.height(5.dp))
@@ -341,12 +379,20 @@ private fun CrackBanner(state: CrackState, onCancel: () -> Unit, onDismiss: () -
                 val eta = etaLocal(state.tried, state.total, state.perSec)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(
-                        "⚙ cracking ${state.ssid}",
+                        "⚙ cracking ${state.ssid}" + if (queueCount > 0) "  · $queueCount queued" else "",
                         color = primary, fontWeight = FontWeight.Bold, fontSize = 12.sp, fontFamily = TerminalMono,
                         maxLines = 1, modifier = Modifier.weight(1f)
                     )
+                    // Skip → move to the next queued crack (only meaningful when something's queued).
+                    if (queueCount > 0) {
+                        Text(
+                            "[ skip ]",
+                            color = primary, fontSize = 12.sp, fontFamily = TerminalMono,
+                            modifier = Modifier.clickable { onSkip() }.padding(end = 10.dp)
+                        )
+                    }
                     Text(
-                        "[ cancel ]",
+                        "[ stop ]",
                         color = error, fontSize = 12.sp, fontFamily = TerminalMono,
                         modifier = Modifier.clickable { onCancel() }
                     )

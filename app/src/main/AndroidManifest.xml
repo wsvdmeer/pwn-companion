@@ -16,6 +16,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <!-- Notification Permission (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -56,6 +57,12 @@
         <service
             android:name=".services.CompanionBackgroundService"
             android:foregroundServiceType="connectedDevice"
+            android:enabled="true" />
+
+        <!-- On-phone WPA cracking (keeps a multi-hour crack alive when the screen's off) -->
+        <service
+            android:name=".services.CrackService"
+            android:foregroundServiceType="dataSync"
             android:enabled="true" />
 
         <!-- Bluetooth Connection Receiver -->

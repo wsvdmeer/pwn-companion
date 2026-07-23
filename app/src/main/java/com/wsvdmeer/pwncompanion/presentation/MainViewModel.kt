@@ -6,8 +6,8 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.wsvdmeer.pwncompanion.database.PwnCompanionDatabase
-import com.wsvdmeer.pwncompanion.crack.WordlistManager
-import com.wsvdmeer.pwncompanion.crack.WpaCracker
+import com.wsvdmeer.pwncompanion.crack.CrackEngine
+import com.wsvdmeer.pwncompanion.crack.CrackState
 import com.wsvdmeer.pwncompanion.models.CaptureEntry
 import com.wsvdmeer.pwncompanion.models.DeviceState
 import com.wsvdmeer.pwncompanion.models.GpsData
@@ -21,11 +21,6 @@ import com.wsvdmeer.pwncompanion.services.NetworkService
 import com.wsvdmeer.pwncompanion.services.StrategyDecisionEngine
 import com.wsvdmeer.pwncompanion.services.SyncScheduler
 import com.wsvdmeer.pwncompanion.services.WifiMemoryService
-import com.wsvdmeer.pwncompanion.utils.NotificationHelper
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -33,22 +28,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.atomic.AtomicReference
 
 /** Full-screen detail views reachable from the console summaries (tap a section). */
 enum class DetailScreen { NONE, CAPTURES, LOG, LEARNING, STATS }
-
-/** On-phone crack progress (Phase 4), surfaced to the captures screen. */
-sealed interface CrackState {
-    data object Idle : CrackState
-    data class Downloading(val pct: Float) : CrackState
-    data class Running(val ssid: String, val tried: Long, val total: Long, val perSec: Long) : CrackState
-    data class Done(val ssid: String, val password: String) : CrackState
-    data class Failed(val ssid: String, val reason: String) : CrackState
-}
 
 /**
  * Main Activity ViewModel.
@@ -174,107 +157,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Geolocated handshakes captured by the device (newest first).
     private val _captures = MutableStateFlow<List<CaptureEntry>>(emptyList())
-    // Passwords cracked ON-PHONE (normalised bssid → password), overlaid onto captures just
+    // On-phone crack results (bssid → password) from CrackEngine are overlaid onto captures just
     // like wpa-sec results — so an on-phone crack tags the row "cracked · <pw>".
-    private val _localCracked = MutableStateFlow<Map<String, String>>(emptyMap())
     val captures: StateFlow<List<CaptureEntry>> =
-        combine(_captures, _localCracked) { caps, cracked ->
+        combine(_captures, CrackEngine.cracked) { caps, cracked ->
             if (cracked.isEmpty()) caps
             else caps.map { c ->
-                val pw = cracked[normMacLocal(c.bssid)]
+                val pw = cracked[CrackEngine.norm(c.bssid)]
                 if (pw != null && c.password == null) c.copy(password = pw) else c
             }
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    // ── On-phone cracking (Phase 4) ────────────────────────────────────────────
-    private val _crackState = MutableStateFlow<CrackState>(CrackState.Idle)
-    val crackState: StateFlow<CrackState> = _crackState.asStateFlow()
-    private var crackJob: Job? = null
+    // ── On-phone cracking (Phase 4) — delegated to the process-lifetime CrackEngine, which runs
+    // a FIFO queue inside a foreground service so a multi-hour crack survives lock/backgrounding
+    // and resumes after a kill. The ViewModel just forwards intent + re-exposes the engine flows.
+    val crackState: StateFlow<CrackState> = CrackEngine.state
+    val crackQueue: StateFlow<List<CaptureEntry>> = CrackEngine.queue
 
-    private fun normMacLocal(s: String) = s.lowercase().replace(":", "").replace("-", "")
+    /** Queue a capture for on-phone cracking (starts the engine if idle). */
+    fun enqueueCrack(capture: CaptureEntry) = CrackEngine.enqueue(getApplication(), capture)
 
-    /**
-     * Crack a capture's PMKID on-phone against the downloaded wordlist. Downloads the list on
-     * first use, then runs [WpaCracker] across all CPU cores (stride-partitioned), reporting
-     * progress via [crackState]. On a hit, overlays the password onto the capture + notifies.
-     * One crack at a time.
-     */
-    fun startCrack(capture: CaptureEntry) {
-        val hash = capture.hash22000 ?: return
-        if (!WpaCracker.isCrackablePmkid(hash)) return
-        if (crackJob?.isActive == true) return
-        val ssid = capture.ssid.ifBlank { capture.bssid.ifBlank { "network" } }
-        crackJob = viewModelScope.launch(Dispatchers.Default) {
-            try {
-                if (!WordlistManager.isLoaded) {
-                    _crackState.value = CrackState.Downloading(0f)
-                    val ok = WordlistManager.ensure(getApplication()) { p ->
-                        _crackState.value = CrackState.Downloading(p)
-                    }
-                    if (!ok) { _crackState.value = CrackState.Failed(ssid, "wordlist unavailable"); return@launch }
-                }
-                val h = WpaCracker.parsePmkid(hash)
-                if (h == null) { _crackState.value = CrackState.Failed(ssid, "bad hash"); return@launch }
-                val words = WordlistManager.words()
-                val total = words.size.toLong()
-                val tried = AtomicLong(0)
-                val found = AtomicReference<String?>(null)
-                val startMs = System.currentTimeMillis()
-                _crackState.value = CrackState.Running(ssid, 0, total, 0)
-                // Leave one core for the UI/system so the phone stays responsive and — crucially —
-                // so the progress ticker (below) isn't starved off the CPU by the crypto workers.
-                val cores = (Runtime.getRuntime().availableProcessors() - 1).coerceIn(1, 8)
-                coroutineScope {
-                    // Ticker runs on Main: the CPU-bound workers monopolise every Default thread and
-                    // never suspend, so a Default-dispatched ticker would never get to resume after
-                    // its delay. Its work is trivial (read an atomic, push a StateFlow), so Main is fine.
-                    val ticker = launch(Dispatchers.Main) {
-                        while (isActive && found.get() == null) {
-                            val n = tried.get()
-                            val secs = (System.currentTimeMillis() - startMs) / 1000.0
-                            val ps = if (secs > 0.5) (n / secs).toLong() else 0L
-                            _crackState.value = CrackState.Running(ssid, n, total, ps)
-                            delay(400)
-                        }
-                    }
-                    // Stride-partition the (already length-filtered) list across cores.
-                    (0 until cores).map { t ->
-                        launch {
-                            var i = t
-                            while (i < words.size) {
-                                if (found.get() != null || !isActive) return@launch
-                                if (WpaCracker.verify(h, words[i])) { found.set(words[i]); return@launch }
-                                tried.incrementAndGet()
-                                i += cores
-                            }
-                        }
-                    }.forEach { it.join() }
-                    ticker.cancel()
-                }
-                val pw = found.get()
-                if (pw != null) {
-                    _localCracked.update { it + (normMacLocal(capture.bssid) to pw) }
-                    _crackState.value = CrackState.Done(ssid, pw)
-                    runCatching { NotificationHelper.notifyCracked(getApplication(), ssid, pw) }
-                    Log.i(tag, "on-phone crack SUCCESS: $ssid → $pw")
-                } else {
-                    _crackState.value = CrackState.Failed(ssid, "not in wordlist (${total} tried)")
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                _crackState.value = CrackState.Idle
-                throw e
-            } catch (e: Exception) {
-                Log.e(tag, "crack error: ${e.message}", e)
-                _crackState.value = CrackState.Failed(ssid, e.message ?: "error")
-            }
-        }
-    }
+    /** Remove a still-queued (not-yet-running) capture from the crack queue. */
+    fun dequeueCrack(capture: CaptureEntry) = CrackEngine.dequeue(capture)
 
-    /** Abort the running crack. */
-    fun cancelCrack() { crackJob?.cancel(); crackJob = null; _crackState.value = CrackState.Idle }
+    /** Skip the crack in progress and advance to the next queued one. */
+    fun skipCrack() = CrackEngine.skipCurrent()
+
+    /** Abort the current crack and the whole queue. */
+    fun cancelCrack() = CrackEngine.cancelAll(getApplication())
 
     /** Clear a finished (Done/Failed) crack banner. */
-    fun dismissCrack() { if (crackJob?.isActive != true) _crackState.value = CrackState.Idle }
+    fun dismissCrack() = CrackEngine.dismiss()
 
     // Latest per-epoch device telemetry (vitals, reward, mood counters).
     private val _telemetry = MutableStateFlow<com.wsvdmeer.pwncompanion.models.DeviceTelemetry?>(null)

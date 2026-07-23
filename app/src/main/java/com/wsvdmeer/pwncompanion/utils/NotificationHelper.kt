@@ -13,6 +13,7 @@ import androidx.core.content.ContextCompat
 import com.wsvdmeer.pwncompanion.R
 import com.wsvdmeer.pwncompanion.presentation.MainActivity
 import com.wsvdmeer.pwncompanion.services.CompanionBackgroundService
+import com.wsvdmeer.pwncompanion.services.CrackService
 import com.wsvdmeer.pwncompanion.services.GpsService
 
 /**
@@ -32,9 +33,12 @@ object NotificationHelper {
     // Alerts: user-facing events (cracked passwords) — HIGH importance so they heads-up +
     // make a sound, unlike the MIN foreground-service notice.
     const val ALERTS_CHANNEL           = "alerts_v2"
+    // Crack progress: LOW importance — a live progress bar, visible + silent (no heads-up).
+    const val CRACK_SERVICE_CHANNEL    = "crack_service_v1"
 
     // Notification IDs (must match those used in the services)
     const val NOTIFICATION_ID_NETWORK  = 1000
+    const val NOTIFICATION_ID_CRACK    = 1003
     private const val NOTIFICATION_ID_ALERTS_SUMMARY = 1004
     private const val CRACKED_ID_BASE  = 2_000_000
 
@@ -76,7 +80,71 @@ object NotificationHelper {
                 description = "Cracked passwords"
                 setShowBadge(true)
             })
+
+            // IMPORTANCE_LOW: a live progress bar in the shade while an on-phone crack runs —
+            // visible (so you know the phone's working) but silent, no heads-up.
+            nm.createNotificationChannel(NotificationChannel(
+                CRACK_SERVICE_CHANNEL,
+                "Cracking",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "On-phone WPA cracking progress"
+                enableVibration(false)
+                setShowBadge(false)
+            })
         }
+    }
+
+    // ── Crack progress notification (foreground CrackService) ──────────────────
+
+    /** Initial crack-service notification (indeterminate, shown before progress is known). */
+    fun createCrackServiceNotification(context: Context): Notification =
+        buildCrackNotification(context, "Cracking…", "starting", 0, 0, indeterminate = true, showProgress = true)
+
+    /** Refresh the crack notification with live title/text/progress. */
+    fun updateCrackNotification(
+        context: Context,
+        title: String,
+        text: String,
+        max: Int = 0,
+        progress: Int = 0,
+        indeterminate: Boolean = false,
+        showProgress: Boolean = true,
+    ) {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.notify(
+            NOTIFICATION_ID_CRACK,
+            buildCrackNotification(context, title, text, max, progress, indeterminate, showProgress)
+        )
+    }
+
+    private fun buildCrackNotification(
+        context: Context,
+        title: String,
+        text: String,
+        max: Int,
+        progress: Int,
+        indeterminate: Boolean,
+        showProgress: Boolean,
+    ): Notification {
+        val builder = NotificationCompat.Builder(context, CRACK_SERVICE_CHANNEL)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setSmallIcon(com.wsvdmeer.pwncompanion.R.drawable.ic_stat_pwn)
+            .setColor(ContextCompat.getColor(context, R.color.phosphor_green))
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setShowWhen(false)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setContentIntent(mainActivityIntent(context))
+            .addAction(
+                android.R.drawable.ic_menu_close_clear_cancel,
+                "Stop",
+                stopCrackServiceIntent(context)
+            )
+        if (showProgress) builder.setProgress(max, progress, indeterminate)
+        return builder.build()
     }
 
     // ── Event alerts (cracked passwords, link up) ──────────────────────────────
@@ -230,6 +298,17 @@ object NotificationHelper {
         }
         return PendingIntent.getService(
             context, 1, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    /** Stop button on the crack notification → abort the whole crack queue. */
+    private fun stopCrackServiceIntent(context: Context): PendingIntent {
+        val intent = Intent(context, CrackService::class.java).apply {
+            action = CrackService.ACTION_STOP
+        }
+        return PendingIntent.getService(
+            context, 3, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
     }

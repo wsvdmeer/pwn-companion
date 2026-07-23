@@ -30,6 +30,13 @@ object WordlistManager {
     val isLoaded: Boolean get() = candidates != null
     fun words(): List<String> = candidates ?: emptyList()
 
+    /**
+     * Stable identity of the currently loaded list, used to validate resume checkpoints: a saved
+     * crack position is only valid against the exact same ordered candidate set. The candidate
+     * count is deterministic for a given file + filter, so it's a cheap, reliable fingerprint.
+     */
+    fun identity(): String = "default:" + (candidates?.size ?: 0)
+
     private fun file(context: Context) = File(context.filesDir, "wordlist.gz")
 
     /**
