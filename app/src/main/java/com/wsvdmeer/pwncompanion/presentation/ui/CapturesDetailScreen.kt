@@ -4,6 +4,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -56,6 +58,7 @@ import com.wsvdmeer.pwncompanion.crack.WpaCracker
 import com.wsvdmeer.pwncompanion.models.CaptureEntry
 import com.wsvdmeer.pwncompanion.models.GpsData
 import com.wsvdmeer.pwncompanion.crack.CrackEngine
+import com.wsvdmeer.pwncompanion.crack.CrackSettings
 import com.wsvdmeer.pwncompanion.crack.CrackState
 import com.wsvdmeer.pwncompanion.presentation.MainViewModel
 import com.wsvdmeer.pwncompanion.presentation.theme.TerminalMono
@@ -90,6 +93,13 @@ fun CapturesDetailScreen(
     var geoOnly by remember { mutableStateOf(false) }
     var crackedOnly by remember { mutableStateOf(false) }
     var crackableOnly by remember { mutableStateOf(false) }
+
+    // Gentle-knob power settings for cracking (persisted; also read by CrackEngine).
+    val context = LocalContext.current
+    LaunchedEffect(Unit) { CrackSettings.ensureLoaded(context) }
+    val gentleCpu by CrackSettings.gentleCpu.collectAsState()
+    val chargerOnly by CrackSettings.chargerOnly.collectAsState()
+    val lowBatteryStop by CrackSettings.lowBatteryStop.collectAsState()
 
     val primary = MaterialTheme.colorScheme.primary
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
@@ -187,6 +197,24 @@ fun CapturesDetailScreen(
             FilterChip("crackable", crackableOnly, primary, dim) { crackableOnly = !crackableOnly }
             FilterChip("cracked", crackedOnly, primary, dim) { crackedOnly = !crackedOnly }
         }
+        // Power knobs for on-phone cracking — only shown when there's something to crack.
+        // Scrollable so three chips + label never overflow a narrow screen.
+        if (crackable > 0) {
+            Spacer(Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    "power",
+                    color = dim, fontSize = 11.sp, fontFamily = TerminalMono,
+                    modifier = Modifier.padding(top = 7.dp)
+                )
+                FilterChip("easy cpu", gentleCpu, primary, dim) { CrackSettings.setGentleCpu(context, !gentleCpu) }
+                FilterChip("charger only", chargerOnly, primary, dim) { CrackSettings.setChargerOnly(context, !chargerOnly) }
+                FilterChip("stop <15%", lowBatteryStop, primary, dim) { CrackSettings.setLowBatteryStop(context, !lowBatteryStop) }
+            }
+        }
         Spacer(Modifier.height(6.dp))
         Text(
             "${filtered.size} / ${captures.size} shown",
@@ -228,22 +256,27 @@ fun CapturesDetailScreen(
         // ── full list ───────────────────────────────────────────────────────
         // Which capture (by BSSID) is cracking now, and which are queued — so rows can show
         // "cracking" / "queued" and a tap can enqueue (or dequeue a queued one) even mid-crack.
-        val runningKey = (crackState as? CrackState.Running)?.let { CrackEngine.norm(it.bssid) }
+        val currentKey = when (val s = crackState) {
+            is CrackState.Running -> CrackEngine.norm(s.bssid)
+            is CrackState.Paused -> CrackEngine.norm(s.bssid)
+            else -> null
+        }
+        val currentPaused = crackState is CrackState.Paused
         val queuedKeys = remember(crackQueue) { crackQueue.map { CrackEngine.norm(it.bssid) }.toSet() }
         LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
             items(filtered, key = { it.key }) { c ->
                 val k = CrackEngine.norm(c.bssid)
-                val isRunning = runningKey == k
+                val isCurrent = currentKey == k
                 val isQueued = k in queuedKeys
                 val ready = !c.isCracked && WpaCracker.isCrackablePmkid(c.hash22000)
-                // Tap to queue; tap a queued row to remove it; the running row isn't tappable.
+                // Tap to queue; tap a queued row to remove it; the current row isn't tappable.
                 val onTap: (() -> Unit)? = when {
-                    !ready || isRunning -> null
+                    !ready || isCurrent -> null
                     isQueued -> ({ viewModel.dequeueCrack(c) })
                     else -> ({ viewModel.enqueueCrack(c) })
                 }
                 val rowState = when {
-                    isRunning -> RowCrack.RUNNING
+                    isCurrent -> if (currentPaused) RowCrack.PAUSED else RowCrack.RUNNING
                     isQueued -> RowCrack.QUEUED
                     else -> RowCrack.NONE
                 }
@@ -255,7 +288,7 @@ fun CapturesDetailScreen(
 }
 
 /** Per-row crack status the list overlays onto a capture. */
-private enum class RowCrack { NONE, QUEUED, RUNNING }
+private enum class RowCrack { NONE, QUEUED, RUNNING, PAUSED }
 
 /** One capture row: geo marker, SSID, coords (if any), relative age. */
 @Composable
@@ -306,6 +339,11 @@ private fun CaptureDetailRow(
             rowState == RowCrack.RUNNING -> Text(
                 "cracking…",
                 color = primary, fontWeight = FontWeight.Bold, fontSize = 10.sp,
+                fontFamily = TerminalMono, modifier = Modifier.padding(end = 8.dp)
+            )
+            rowState == RowCrack.PAUSED -> Text(
+                "paused",
+                color = Color(0xFFFFA533), fontSize = 10.sp,
                 fontFamily = TerminalMono, modifier = Modifier.padding(end = 8.dp)
             )
             rowState == RowCrack.QUEUED -> Text(
@@ -404,6 +442,19 @@ private fun CrackBanner(
                 )
                 Spacer(Modifier.height(5.dp))
                 CrackBar(frac, primary)
+            }
+            is CrackState.Paused -> {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(
+                        "⏸ paused · ${state.reason}",
+                        color = Color(0xFFFFA533), fontWeight = FontWeight.Bold, fontSize = 12.sp,
+                        fontFamily = TerminalMono, maxLines = 1, modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        "[ stop ]", color = error, fontSize = 12.sp, fontFamily = TerminalMono,
+                        modifier = Modifier.clickable { onCancel() }
+                    )
+                }
             }
             is CrackState.Done -> {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

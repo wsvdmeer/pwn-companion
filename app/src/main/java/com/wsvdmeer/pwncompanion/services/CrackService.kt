@@ -94,6 +94,9 @@ class CrackService : Service() {
                     max = 100, progress = pct, indeterminate = st.total <= 0L
                 )
             }
+            is CrackState.Paused -> NotificationHelper.updateCrackNotification(
+                this, "Cracking paused", st.reason, showProgress = false
+            )
             is CrackState.Done -> NotificationHelper.updateCrackNotification(
                 this, "Cracked ${st.ssid}", st.password, showProgress = false
             )

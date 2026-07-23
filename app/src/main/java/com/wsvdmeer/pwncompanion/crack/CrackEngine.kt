@@ -30,6 +30,8 @@ sealed interface CrackState {
     data object Idle : CrackState
     data class Downloading(val pct: Float) : CrackState
     data class Running(val bssid: String, val ssid: String, val tried: Long, val total: Long, val perSec: Long) : CrackState
+    /** Held by a power policy (unplugged / low battery); resumes automatically when it clears. */
+    data class Paused(val bssid: String, val ssid: String, val reason: String) : CrackState
     data class Done(val bssid: String, val ssid: String, val password: String) : CrackState
     data class Failed(val bssid: String, val ssid: String, val reason: String) : CrackState
 }
@@ -60,6 +62,7 @@ object CrackEngine {
 
     private var job: Job? = null
     private val skip = AtomicBoolean(false)
+    private val paused = AtomicBoolean(false)
 
     fun norm(bssid: String): String = bssid.lowercase().replace(":", "").replace("-", "")
 
@@ -102,6 +105,7 @@ object CrackEngine {
 
     private fun start(context: Context) {
         if (job?.isActive == true) return   // processor already draining the queue
+        CrackSettings.ensureLoaded(context)
         startService(context)
         job = scope.launch {
             try {
@@ -114,9 +118,26 @@ object CrackEngine {
                         return@launch
                     }
                 }
+                // `current` is the item being worked. It's held (not re-queued) across a power
+                // pause so it resumes from its checkpoint when power returns, rather than being
+                // dropped or restarted.
+                var current: CaptureEntry? = null
                 while (true) {
-                    val next = dequeueNext() ?: break
-                    crackOne(context, next)
+                    val reason = blockReason(context)
+                    if (reason != null) {
+                        val label = current ?: _queue.value.firstOrNull()
+                        _state.value = CrackState.Paused(
+                            label?.bssid ?: "",
+                            label?.let { it.ssid.ifBlank { it.bssid } } ?: "",
+                            reason,
+                        )
+                        delay(2000)   // re-check power every 2s
+                        continue
+                    }
+                    if (current == null) current = dequeueNext()
+                    if (current == null) break
+                    val consumed = crackOne(context, current)
+                    if (consumed) current = null   // else: paused mid-crack → retry (resumes)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -136,13 +157,15 @@ object CrackEngine {
         return next
     }
 
-    private suspend fun crackOne(context: Context, capture: CaptureEntry) {
+    /** Crack [capture]; returns true if it's consumed (advance the queue), false if paused mid-run. */
+    private suspend fun crackOne(context: Context, capture: CaptureEntry): Boolean {
         skip.set(false)
+        paused.set(false)
         val ssid = capture.ssid.ifBlank { capture.bssid.ifBlank { "network" } }
         val bssid = capture.bssid
         val key = norm(bssid)
         val h = WpaCracker.parsePmkid(capture.hash22000 ?: "")
-        if (h == null) { _state.value = CrackState.Failed(bssid, ssid, "bad hash"); return }
+        if (h == null) { _state.value = CrackState.Failed(bssid, ssid, "bad hash"); return true }
         val words = WordlistManager.words()
         val total = words.size.toLong()
         val cores = workerCores(context)
@@ -163,13 +186,15 @@ object CrackEngine {
             // Ticker on Main so the CPU-bound workers (which never suspend) can't starve it off
             // the Default pool — that would freeze the progress bar even as cracking proceeds.
             val ticker = launch(Dispatchers.Main) {
-                while (isActive && found.get() == null && !skip.get()) {
+                while (isActive && found.get() == null && !skip.get() && !paused.get()) {
+                    // Power policy can pull the plug mid-crack — pause cleanly (checkpoint holds).
+                    if (blockReason(context) != null) { paused.set(true); break }
                     val n = tried.get()
                     val secs = (System.currentTimeMillis() - startMs) / 1000.0
                     val done = (n - startIndex).coerceAtLeast(0)
                     val ps = if (secs > 0.5) (done / secs).toLong() else 0L
                     _state.value = CrackState.Running(bssid, ssid, n, total, ps)
-                    // Persist the safe floor so a kill/reboot/cancel resumes ~here, not from 0.
+                    // Persist the safe floor so a kill/reboot/cancel/pause resumes ~here, not from 0.
                     saveCheckpoint(context, key, wordlistId, (cursor.get() - cores).coerceAtLeast(0))
                     delay(400)
                 }
@@ -177,7 +202,7 @@ object CrackEngine {
             // Workers pull the next index from the shared cursor (monotonic → resumable).
             (0 until cores).map {
                 launch {
-                    while (found.get() == null && !skip.get() && isActive) {
+                    while (found.get() == null && !skip.get() && !paused.get() && isActive) {
                         val idx = cursor.getAndIncrement()
                         if (idx >= words.size) return@launch
                         val candidate = words[idx.toInt()]
@@ -188,9 +213,11 @@ object CrackEngine {
             }.forEach { it.join() }
             ticker.cancel()
         }
+        // Persist the latest floor before deciding the outcome (covers a mid-crack pause).
+        saveCheckpoint(context, key, wordlistId, (cursor.get() - cores).coerceAtLeast(0))
         val pw = found.get()
         val queueLeft = _queue.value.size
-        when {
+        return when {
             pw != null -> {
                 clearCheckpoint(context, key)
                 _cracked.update { it + (key to pw) }
@@ -198,17 +225,21 @@ object CrackEngine {
                 runCatching { NotificationHelper.notifyCracked(context, ssid, pw) }
                 Log.i(TAG, "on-phone crack SUCCESS: $ssid -> $pw")
                 if (queueLeft > 0) delay(1500)   // let the result show before the next one starts
+                true
             }
+            paused.get() -> false   // power policy paused us; retry the same network on resume
             skip.get() -> {
                 // Keep the checkpoint — a skipped crack resumes if you queue it again.
                 _state.value = CrackState.Failed(bssid, ssid, "skipped")
                 if (queueLeft > 0) delay(600)
+                true
             }
             else -> {
                 // Wordlist exhausted — nothing left to resume.
                 clearCheckpoint(context, key)
                 _state.value = CrackState.Failed(bssid, ssid, "not in wordlist ($total tried)")
                 if (queueLeft > 0) delay(1500)
+                true
             }
         }
     }
@@ -236,13 +267,30 @@ object CrackEngine {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(bssidKey).apply()
     }
 
-    /** Half the cores on battery (cooler, longer), all-but-one while charging (fastest). */
+    /** Worker count, honouring the gentle knobs: cap at 2 in easy-CPU mode, else half on battery
+     * and all-but-one while charging. */
     private fun workerCores(context: Context): Int {
         val cpus = Runtime.getRuntime().availableProcessors()
-        val charging = runCatching {
-            (context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager).isCharging
-        }.getOrDefault(false)
-        return if (charging) (cpus - 1).coerceIn(1, 8) else (cpus / 2).coerceIn(1, 8)
+        if (CrackSettings.gentleCpu.value) return 2.coerceIn(1, cpus)
+        return if (isCharging(context)) (cpus - 1).coerceIn(1, 8) else (cpus / 2).coerceIn(1, 8)
+    }
+
+    private fun isCharging(context: Context): Boolean = runCatching {
+        (context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager).isCharging
+    }.getOrDefault(false)
+
+    /** Why cracking is currently blocked by the power policy, or null if it may run. */
+    private fun blockReason(context: Context): String? {
+        CrackSettings.ensureLoaded(context)
+        val bm = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+        if (runCatching { bm.isCharging }.getOrDefault(false)) return null   // plugged in
+        if (CrackSettings.chargerOnly.value) return "waiting for charger"
+        if (CrackSettings.lowBatteryStop.value) {
+            val level = runCatching { bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) }
+                .getOrDefault(100)
+            if (level in 0..CrackSettings.LOW_PCT) return "battery $level% - paused"
+        }
+        return null
     }
 
     private fun startService(context: Context) {
