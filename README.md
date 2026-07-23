@@ -290,6 +290,10 @@ On connect, the plugin scans the handshake directory and pairs each `<ssid>_<bss
 
 Tapping in opens a full **`[ captures ]` detail** with a searchable list and a **pixel map** of where handshakes were caught. It fetches dark [CARTO](https://carto.com/) basemap tiles for the capture area and renders them as a **pixel-perfect square grid** (drawn in a Compose `Canvas` at integer cell sizes, auto-contrast-normalised): the street network shows as muted **grey** squares, each catch as a bright **green** square, and your current position as an **orange** one. Tiles are cached on disk; with no network it falls back to a pure-ASCII block heatmap so there's always a map. © OpenStreetMap © CARTO.
 
+## Privacy — everything stays on your phone
+
+No capture, location, or password data ever leaves your device. The app has **no analytics, no crash reporting, and no cloud sync** — captured networks, GPS fixes, and cracked passwords live only on your phone (and travel only to your Pi over the local Bluetooth link). Its **only** outbound network calls fetch public resources: the on-phone cracking wordlist (pwncrack) and the dark map tiles (CARTO). The single exception is entirely opt-in and Pi-side — if *you* enable **wpa-sec**, the Pi uploads handshakes to that service for cracking.
+
 ## Handshake cracking (wpa-sec + on-phone)
 
 A handshake only *counts* once it's cracked, so each capture is graded on-device by **`hcxpcapngtool`**:
@@ -392,6 +396,12 @@ The plugin is hardened for this flaky link: sends are bounded by a timeout, WebS
 **GPL-3.0** — see [`LICENSE`](LICENSE). You may use, modify, and redistribute this software under the terms of the GNU General Public License v3.0; derivative works must remain open-source under the same license.
 
 Built on / credits: [Pwnagotchi (jayofelony fork)](https://github.com/jayofelony/pwnagotchi).
+
+### Third-party assets
+
+- **Share Tech Mono** — the terminal font (bundled as `res/font/terminal_mono.ttf`), © Carrois Apostrophe, licensed under the [SIL Open Font License 1.1](licenses/ShareTechMono-OFL.txt).
+- **Map tiles** — © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors, © [CARTO](https://carto.com/attributions) (dark basemap, fetched at runtime, cached on-device).
+- **Cracking wordlist** — pwncrack `default.gz` (fetched at runtime for on-phone cracking; not redistributed here).
 
 ### Trademarks & parody
 
