@@ -166,6 +166,9 @@ object CrackEngine {
         return next
     }
 
+    private const val QUICK_LIMIT = 25_000L   // quick-pass tries only the most-likely top-N
+    private const val BATCH = 256             // candidates per native JNI call / Kotlin chunk
+
     /** Crack [capture]; returns true if it's consumed (advance the queue), false if paused mid-run. */
     private suspend fun crackOne(context: Context, capture: CaptureEntry): Boolean {
         skip.set(false)
@@ -176,54 +179,71 @@ object CrackEngine {
         val h = WpaCracker.parsePmkid(capture.hash22000 ?: "")
         if (h == null) { _state.value = CrackState.Failed(bssid, ssid, "bad hash"); return true }
         val words = WordlistManager.words()
-        val total = words.size.toLong()
         val cores = workerCores(context)
+        val quick = CrackSettings.quickCrack.value
+        // Active set: quick tries only the top-N; full tries everything. `limit` also drives the
+        // progress total, so the ETA reflects the quick set — not the whole list.
+        val limit = if (quick) minOf(QUICK_LIMIT, words.size.toLong()) else words.size.toLong()
 
-        // Resume: pick up from the saved checkpoint if it's valid for this exact wordlist.
-        // Indices are handed out from a single monotonic cursor, so every index below
-        // (cursor - cores) is guaranteed already verified — that floor is the safe checkpoint.
+        // Resume (full only): pick up from the saved checkpoint if valid for this wordlist. Indices
+        // come from one monotonic cursor, so everything below (cursor - inflight) is already done.
         val wordlistId = WordlistManager.identity()
-        val startIndex = loadCheckpoint(context, key, wordlistId).coerceIn(0L, total)
-        val cursor = AtomicLong(startIndex)      // next candidate index to hand out
-        val tried = AtomicLong(startIndex)       // absolute position (for the bar)
+        val startIndex = if (quick) 0L else loadCheckpoint(context, key, wordlistId).coerceIn(0L, limit)
+        val cursor = AtomicLong(startIndex)
+        val tried = AtomicLong(startIndex)
         val found = AtomicReference<String?>(null)
         val startMs = System.currentTimeMillis()
-        _state.value = CrackState.Running(bssid, ssid, startIndex, total, 0)
-        if (startIndex > 0) Log.i(TAG, "resuming $ssid from $startIndex/$total")
-        Log.i(TAG, "cracking $ssid with $cores workers over $total candidates")
+        val useNative = NativeWpaCracker.available && NativeWpaCracker.verified
+        val inflight = BATCH.toLong() * cores
+        _state.value = CrackState.Running(bssid, ssid, startIndex, limit, 0)
+        if (!quick && startIndex > 0) Log.i(TAG, "resuming $ssid from $startIndex/$limit")
+        Log.i(TAG, "cracking $ssid: ${if (quick) "quick" else "full"}, $cores workers, " +
+                "${if (useNative) "native" else "kotlin"}, $limit candidates")
         coroutineScope {
             // Ticker on Main so the CPU-bound workers (which never suspend) can't starve it off
             // the Default pool — that would freeze the progress bar even as cracking proceeds.
             val ticker = launch(Dispatchers.Main) {
                 while (isActive && found.get() == null && !skip.get() && !paused.get()) {
-                    // Power policy can pull the plug mid-crack — pause cleanly (checkpoint holds).
                     if (blockReason(context) != null) { paused.set(true); break }
                     val n = tried.get()
                     val secs = (System.currentTimeMillis() - startMs) / 1000.0
                     val done = (n - startIndex).coerceAtLeast(0)
                     val ps = if (secs > 0.5) (done / secs).toLong() else 0L
-                    _state.value = CrackState.Running(bssid, ssid, n, total, ps)
-                    // Persist the safe floor so a kill/reboot/cancel/pause resumes ~here, not from 0.
-                    saveCheckpoint(context, key, wordlistId, (cursor.get() - cores).coerceAtLeast(0))
+                    _state.value = CrackState.Running(bssid, ssid, n, limit, ps)
+                    if (!quick) saveCheckpoint(context, key, wordlistId, (cursor.get() - inflight).coerceAtLeast(0))
                     delay(400)
                 }
             }
-            // Workers pull the next index from the shared cursor (monotonic → resumable).
+            // Workers pull a batch of indices from the shared cursor and verify — one native JNI
+            // call per batch when the lib is present + self-checked, else the pure-Kotlin path.
             (0 until cores).map {
                 launch {
                     while (found.get() == null && !skip.get() && !paused.get() && isActive) {
-                        val idx = cursor.getAndIncrement()
-                        if (idx >= words.size) return@launch
-                        val candidate = words[idx.toInt()]
-                        if (WpaCracker.verify(h, candidate)) { found.set(candidate); return@launch }
-                        tried.incrementAndGet()
+                        val start = cursor.getAndAdd(BATCH.toLong())
+                        if (start >= limit) return@launch
+                        val end = minOf(start + BATCH, limit)
+                        val n = (end - start).toInt()
+                        if (useNative) {
+                            val batch = Array(n) { words[(start + it).toInt()] }
+                            val hit = NativeWpaCracker.crackBatch(h.essid, h.macAp, h.macSta, h.pmkid, 4096, batch)
+                            tried.addAndGet(n.toLong())
+                            if (hit >= 0) { found.set(batch[hit]); return@launch }
+                        } else {
+                            var i = start
+                            while (i < end) {
+                                if (found.get() != null || skip.get() || paused.get() || !isActive) return@launch
+                                val cand = words[i.toInt()]
+                                if (WpaCracker.verify(h, cand)) { found.set(cand); return@launch }
+                                tried.incrementAndGet()
+                                i++
+                            }
+                        }
                     }
                 }
             }.forEach { it.join() }
             ticker.cancel()
         }
-        // Persist the latest floor before deciding the outcome (covers a mid-crack pause).
-        saveCheckpoint(context, key, wordlistId, (cursor.get() - cores).coerceAtLeast(0))
+        if (!quick) saveCheckpoint(context, key, wordlistId, (cursor.get() - inflight).coerceAtLeast(0))
         val pw = found.get()
         val queueLeft = _queue.value.size
         return when {
@@ -239,17 +259,22 @@ object CrackEngine {
             }
             paused.get() -> false   // power policy paused us; retry the same network on resume
             skip.get() -> {
-                // Keep the checkpoint — a skipped crack resumes if you queue it again.
                 _state.value = CrackState.Failed(bssid, ssid, "skipped")
                 if (queueLeft > 0) delay(600)
                 true
             }
+            quick -> {
+                // A quick miss only means "not in the top-$limit" — a full crack may still find it,
+                // so DON'T mark it exhausted; leave the row crackable.
+                _state.value = CrackState.Failed(bssid, ssid, "not in quick set ($limit)")
+                if (queueLeft > 0) delay(800)
+                true
+            }
             else -> {
-                // Wordlist fully searched, no hit — record a lasting "no match" so the row shows
-                // a result and won't be offered for another multi-hour re-run.
+                // Whole list searched, no hit — lasting "no match" so it isn't re-offered.
                 clearCheckpoint(context, key)
                 persistResultExhausted(context, key)
-                _state.value = CrackState.Failed(bssid, ssid, "not in wordlist ($total tried)")
+                _state.value = CrackState.Failed(bssid, ssid, "not in wordlist ($limit tried)")
                 if (queueLeft > 0) delay(1500)
                 true
             }

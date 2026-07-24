@@ -20,7 +20,18 @@ android {
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        // No native code any more (llama.cpp removed) — pure JVM, runs on all ABIs.
+        // Native cracker (libwpacrack.so) — small PBKDF2 kernel for on-phone cracking. arm64 is
+        // the target; armeabi-v7a covers older devices. (Not llama.cpp — a few KB of crypto.)
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     buildTypes {
