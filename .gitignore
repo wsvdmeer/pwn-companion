@@ -23,6 +23,12 @@ __pycache__/
 # Large model assets are downloaded at runtime, not committed
 /app/src/main/assets/models/*.gguf
 .ghtoken
+
+# Release signing — NEVER commit the keystore or its passwords.
+keystore.properties
+*.jks
+*.keystore
+
 # Screenshots are ignored by default (raw captures often contain IP / SSID / GPS / the
 # device name). ONLY the vetted, redacted/cropped README shots under docs/ are tracked.
 *.png
