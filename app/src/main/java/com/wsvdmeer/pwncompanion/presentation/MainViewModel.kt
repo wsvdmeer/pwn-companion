@@ -173,6 +173,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // and resumes after a kill. The ViewModel just forwards intent + re-exposes the engine flows.
     val crackState: StateFlow<CrackState> = CrackEngine.state
     val crackQueue: StateFlow<List<CaptureEntry>> = CrackEngine.queue
+    // Networks fully searched on-phone with no hit — shown as a lasting "no match" status.
+    val crackExhausted: StateFlow<Set<String>> = CrackEngine.exhausted
+
+    init {
+        // Restore persisted crack outcomes so cracked passwords + "no match" tags survive restart.
+        CrackEngine.loadResults(getApplication())
+    }
 
     /** Queue a capture for on-phone cracking (starts the engine if idle). */
     fun enqueueCrack(capture: CaptureEntry) = CrackEngine.enqueue(getApplication(), capture)

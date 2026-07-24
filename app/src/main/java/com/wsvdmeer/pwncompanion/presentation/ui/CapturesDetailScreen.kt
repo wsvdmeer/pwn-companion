@@ -89,6 +89,7 @@ fun CapturesDetailScreen(
     val gps by viewModel.gpsData.collectAsState()
     val crackState by viewModel.crackState.collectAsState()
     val crackQueue by viewModel.crackQueue.collectAsState()
+    val crackExhausted by viewModel.crackExhausted.collectAsState()
     var query by remember { mutableStateOf("") }
     var geoOnly by remember { mutableStateOf(false) }
     var crackedOnly by remember { mutableStateOf(false) }
@@ -268,8 +269,9 @@ fun CapturesDetailScreen(
                 val k = CrackEngine.norm(c.bssid)
                 val isCurrent = currentKey == k
                 val isQueued = k in queuedKeys
-                val ready = !c.isCracked && WpaCracker.isCrackablePmkid(c.hash22000)
-                // Tap to queue; tap a queued row to remove it; the current row isn't tappable.
+                val isExhausted = k in crackExhausted
+                val ready = !c.isCracked && !isExhausted && WpaCracker.isCrackablePmkid(c.hash22000)
+                // Tap to queue; tap a queued row to remove it; running/exhausted rows aren't tappable.
                 val onTap: (() -> Unit)? = when {
                     !ready || isCurrent -> null
                     isQueued -> ({ viewModel.dequeueCrack(c) })
@@ -278,6 +280,7 @@ fun CapturesDetailScreen(
                 val rowState = when {
                     isCurrent -> if (currentPaused) RowCrack.PAUSED else RowCrack.RUNNING
                     isQueued -> RowCrack.QUEUED
+                    isExhausted -> RowCrack.EXHAUSTED
                     else -> RowCrack.NONE
                 }
                 CaptureDetailRow(c, primary, dim, onSurface, onCrack = onTap, rowState = rowState)
@@ -288,7 +291,7 @@ fun CapturesDetailScreen(
 }
 
 /** Per-row crack status the list overlays onto a capture. */
-private enum class RowCrack { NONE, QUEUED, RUNNING, PAUSED }
+private enum class RowCrack { NONE, QUEUED, RUNNING, PAUSED, EXHAUSTED }
 
 /** One capture row: geo marker, SSID, coords (if any), relative age. */
 @Composable
@@ -344,6 +347,12 @@ private fun CaptureDetailRow(
             rowState == RowCrack.PAUSED -> Text(
                 "paused",
                 color = Color(0xFFFFA533), fontSize = 10.sp,
+                fontFamily = TerminalMono, modifier = Modifier.padding(end = 8.dp)
+            )
+            rowState == RowCrack.EXHAUSTED -> Text(
+                // Whole wordlist searched on-phone, no hit — a lasting result, not re-offered.
+                "no match",
+                color = dim, fontSize = 10.sp,
                 fontFamily = TerminalMono, modifier = Modifier.padding(end = 8.dp)
             )
             rowState == RowCrack.QUEUED -> Text(
