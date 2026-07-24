@@ -5,6 +5,7 @@ import android.content.Intent
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.wsvdmeer.pwncompanion.BuildConfig
 import com.wsvdmeer.pwncompanion.database.PwnCompanionDatabase
 import com.wsvdmeer.pwncompanion.crack.CrackEngine
 import com.wsvdmeer.pwncompanion.crack.CrackState
@@ -159,10 +160,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _captures = MutableStateFlow<List<CaptureEntry>>(emptyList())
     // On-phone crack results (bssid → password) from CrackEngine are overlaid onto captures just
     // like wpa-sec results — so an on-phone crack tags the row "cracked · <pw>".
+    // Debug-only synthetic capture (null in release / until injected) surfaced in the list.
+    private val _debugCapture = MutableStateFlow<CaptureEntry?>(null)
     val captures: StateFlow<List<CaptureEntry>> =
-        combine(_captures, CrackEngine.cracked) { caps, cracked ->
-            if (cracked.isEmpty()) caps
-            else caps.map { c ->
+        combine(_captures, CrackEngine.cracked, _debugCapture) { caps, cracked, dbg ->
+            val base = if (dbg != null) listOf(dbg) + caps else caps
+            if (cracked.isEmpty()) base
+            else base.map { c ->
                 val pw = cracked[CrackEngine.norm(c.bssid)]
                 if (pw != null && c.password == null) c.copy(password = pw) else c
             }
@@ -195,6 +199,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Clear a finished (Done/Failed) crack banner. */
     fun dismissCrack() = CrackEngine.dismiss()
+
+    /**
+     * DEBUG only: drop a known-crackable capture (reference vector, pw "12345678") into the list
+     * as a real `crack ▸` row, and reset its result so it's re-crackable. No-op in release builds.
+     */
+    fun injectTestCapture() {
+        if (!BuildConfig.DEBUG) return
+        val bssid = "fc:69:0c:15:82:64"
+        CrackEngine.forget(getApplication(), bssid)
+        _debugCapture.value = CaptureEntry(
+            ssid = "TEST-CRACKME", bssid = bssid, quality = "pmkid", timestamp = Long.MAX_VALUE,  // sort to top
+            hash22000 = "WPA*01*72ba558ee61938a6061902e2fa1fb8b3*fc690c158264*f4747f87f9f4*70776e2d746573742d6e6574***",
+        )
+    }
 
     // Latest per-epoch device telemetry (vitals, reward, mood counters).
     private val _telemetry = MutableStateFlow<com.wsvdmeer.pwncompanion.models.DeviceTelemetry?>(null)
