@@ -13,7 +13,7 @@ A [Pwnagotchi](https://github.com/jayofelony/pwnagotchi) is a pocket gadget (usu
 - **geotags** every captured handshake and plots them on a **map**;
 - **decides where to hunt next** — a phone-side advisor ranks Wi-Fi channels by real yield + live client density and steers the device there, so it catches *more* handshakes;
 - gives the pet a genuine **personality voice** — a curated, franchise-flavored corpus with live data woven in, spliced onto the pwnagotchi's own e-ink screen;
-- closes the loop by **cracking** captured handshakes — server-side via wpa-sec, or **on-phone** (offline, pure-Kotlin PMKID) — and showing the recovered passwords.
+- closes the loop by **cracking** captured handshakes — server-side via wpa-sec, or **on-phone** (offline, native-accelerated PMKID) — and showing the recovered passwords.
 
 The guiding idea: **move the thinking to the phone** (which has compute, GPS, and storage) and leave the Pi lean, just hunting. See ["Why the brain lives on the phone"](#why-the-brain-lives-on-the-phone-not-the-pi) below.
 
@@ -97,7 +97,8 @@ Two halves: the **Android app** (on your phone) and the **`pwn-companion` plugin
 **Prerequisites**
 - **JDK 17** — required by the Android Gradle Plugin (9.2).
 - **Android SDK** — `compileSdk`/`targetSdk` **36**, `minSdk` **29** (Android 10+). Install SDK Platform 36 + build-tools via Android Studio or `sdkmanager`.
-- Gradle itself is handled by the wrapper (Gradle 9.4.1) — no separate install. Kotlin 2.2.10. *(No NDK/CMake needed — the voice is pure Kotlin now; there's no native code to compile, so the build is quick.)*
+- Gradle itself is handled by the wrapper (Gradle 9.4.1) — no separate install. Kotlin 2.2.10.
+- **NDK + CMake** — for the small on-phone-cracking library (`libwpacrack.so`, arm64-v8a + armeabi-v7a). Android Studio installs the NDK on first sync, or add it with `sdkmanager "ndk;<version>" "cmake;3.22.1"`. *(That's the only native code — the voice engine is pure Kotlin, no model.)*
 
 **Build & install** (CLI; or just open the project in Android Studio and Run):
 ```bash
@@ -244,7 +245,7 @@ There is **no language model**. The voice is a **curated per-franchise corpus** 
 - **channel steering** — the UCB1 bandit above
 - **the personality tuner** — context policy + hill-climb on `min_rssi` / TTLs / recon
 - **the advisor ranking** — `HuntAdvisor` scores the channels; the voice only reflects the winner
-- **handshake crackability** (`hcxpcapngtool`) and **cracking** — server-side (`wpa-sec`) or **on-phone** (pure-Kotlin PMKID, offline)
+- **handshake crackability** (`hcxpcapngtool`) and **cracking** — server-side (`wpa-sec`) or **on-phone** (native PMKID cracker + Kotlin fallback, offline)
 
 ### It re-implements the AI jayofelony removed
 
@@ -325,13 +326,15 @@ If **wpa-sec** is enabled, the plugin uploads crackable handshakes and downloads
 
 You can also crack **on the phone itself** — no server, no account, works offline. The plugin distills each capture to a hashcat-`22000` line (via `hcxpcapngtool`) and sends it up alongside the capture; PMKID captures then show a bright **`crack ▸`** tag. Tap one and the phone cracks it directly:
 
-- **Pure-Kotlin WPA2** — `PMK = PBKDF2-HMAC-SHA1(passphrase, ESSID, 4096)` → `PMKID = HMAC-SHA1(PMK, "PMK Name" ‖ AP ‖ STA)`, checked against each candidate. No native code, no model, verified against a reference vector in unit tests.
-- **Wordlist** — pwncrack's `default.gz` (**~655 K** WPA-valid, 8–63-char candidates), downloaded once to app storage and reused offline. It's WPA-tuned, so its hit-rate per candidate is far higher than a general dump like rockyou — which is the whole reason it stays small and finishes in hours, not days.
-- **Live progress** — a banner shows `tried / total · rate · ETA` over a real progress bar; the crack runs across your CPU cores.
+- **Native-accelerated** — `PMK = PBKDF2-HMAC-SHA1(passphrase, ESSID, 4096)` → `PMKID = HMAC-SHA1(PMK, "PMK Name" ‖ AP ‖ STA)`, computed in a small C library (`libwpacrack.so`) that uses the **ARMv8 hardware SHA-1 extension** when present (~3× the pure-Kotlin path). Self-validated against a reference vector at load; falls back to a pure-Kotlin cracker on any device without the lib (x86, etc.), so it always works.
+- **Wordlist** — pwncrack's `default.gz` (**~655 K** WPA-valid, 8–63-char candidates), downloaded once to app storage and reused offline. It's WPA-tuned, so its hit-rate per candidate is far higher than a general dump like rockyou.
+- **Speed** — roughly **~8 min (plugged, all cores)** to **~30 min (easy-cpu)** for the whole list on a modern phone. A **quick** toggle (in the filters sheet) tries only the top ~25 k first, catching weak passwords in ~1–3 min; a quick miss is *not* recorded as "no match" (a full run may still get it).
+- **Live progress** — a banner shows `tried / total · rate · ETA` over a real progress bar, across your CPU cores.
 - **Queue** — tap several `crack ▸` rows and they run one after another (`cracking X · N queued`, with skip / stop). Serial by design: cracking is pure PBKDF2 already fanned across cores, so two at once would only halve each other's speed.
-- **Survives lock** — a foreground service keeps a multi-hour crack alive with the screen off (Doze / background-CPU throttling would otherwise stall it), showing progress in its notification.
+- **Survives lock** — a foreground service keeps a long crack alive with the screen off (Doze / background-CPU throttling would otherwise stall it), showing progress in its notification.
 - **Resume** — the position is checkpointed continuously, so an interrupted crack (process kill, reboot, unplug, cancel) picks up where it left off instead of restarting from candidate 0.
-- **Gentle power knobs** (on by default, in a `power` chip row) — **easy cpu** (cap workers at 2), **charger only** (pause while unplugged, auto-resume on replug), **stop <15%** (pause on low battery). Cracking is genuinely heavy — a hot phone, real battery draw, ~4 h for the full list — so these keep it civil; it's best run plugged in with the screen off.
+- **Lasting results** — a hit shows `pw: <password>` on the row and **persists across restarts**; a fully-searched miss is remembered as **`no match`** so it isn't re-offered.
+- **Gentle power knobs** (on by default, in the filters sheet) — **easy cpu** (cap workers at 2), **charger only** (pause while unplugged, auto-resume on replug), **stop <15%** (pause on low battery). Cracking is heavy — a hot phone, real battery draw — so these keep it civil; it's best run plugged in with the screen off.
 
 > On-phone cracking is **PMKID-only for now** (EAPOL / `WPA*02` is the next step). Like wpa-sec it's a dictionary attack — weak/common passwords fall, strong random ones won't — but it's fully local, private, and needs no internet or wpa-sec account.
 
