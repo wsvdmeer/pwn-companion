@@ -5,18 +5,18 @@ import com.wsvdmeer.pwncompanion.models.DeviceTelemetry
 import com.wsvdmeer.pwncompanion.models.LearningStats
 
 /**
- * A deauth-first "where to hunt now" recommendation, computed entirely on the phone
- * from real signals. The LLM never decides anything here — it only *voices* [llmFacts].
+ * A deauth-first "where to hunt now" readout, computed entirely on the phone from real signals.
  *
- * The pwnagotchi's own bettercap/RL brain decides what to attack; the companion's job
- * is to (a) nudge recon toward the channels where handshakes actually land, and (b)
- * surface deauth-mission problems the operator can act on (dead antenna, no clients to
- * deauth, running hot, a spot gone dry).
+ * It is NOT a second steering engine — the [ChannelBandit] decides which channels the device
+ * actually recons (and the advisor names that same channel, so the two never disagree). The
+ * advisor's own job is to (a) surface deauth-mission problems the operator can act on (dead
+ * antenna, no clients to deauth, running hot, a spot gone dry), and (b) hand the pet's voice
+ * pre-chewed facts to phrase in-character.
  */
 data class HuntAdvice(
     /** Deterministic one-liner shown in the [ advisor ] section (always correct). */
     val headline: String,
-    /** The channel we'd park recon on, if we have a confident pick. */
+    /** The channel recon is parked on (the bandit's pick), if any. */
     val channel: Int?,
     /** Deauth-mission problems, most-urgent first (rendered in the error color). */
     val warnings: List<String>,
@@ -26,8 +26,8 @@ data class HuntAdvice(
      * new alert without spamming on every telemetry tick. Null when all clear.
      */
     val alertKey: String?,
-    /** Pre-chewed facts for the LLM to phrase in-character (the ONLY thing it sees). */
-    val llmFacts: String,
+    /** Pre-chewed facts for the pet's voice to phrase in-character. */
+    val voiceFacts: String,
 )
 
 object HuntAdvisor {
@@ -45,6 +45,7 @@ object HuntAdvisor {
         learning: LearningStats?,
         isAutoMode: Boolean,
         minutesSinceLastCatch: Long?,
+        steeredChannel: Int? = null,   // the bandit's current top pick — one source of truth
     ): HuntAdvice? {
         val warnings = mutableListOf<String>()
         var alertKey: String? = null
@@ -72,7 +73,8 @@ object HuntAdvisor {
             if (alertKey == null) alertKey = "dry:${bucket(minutesSinceLastCatch!!.toInt(), 30, 60, 120)}"
         }
 
-        // ── channel pick: device truth first, learning DB as fallback ───────────
+        // ── channel pick: name the bandit's actual steer (one source of truth), then fall
+        // back to device autotune / learning DB when it hasn't picked yet ────────────────
         val ranked = autotune.entries
             .filter { it.key in 1..165 && it.value.handshakes > 0 }
             .sortedWith(
@@ -87,6 +89,18 @@ object HuntAdvisor {
             !isAutoMode -> {
                 headline = "manual mode — not hunting. flip to auto to catch."
                 channel = null
+            }
+            steeredChannel != null -> {
+                // Mirror the bandit so [ advisor ] and [ steering ] never disagree; annotate
+                // with this channel's own stats when we have them.
+                val c = steeredChannel
+                val v = autotune[c]
+                channel = c
+                headline = buildString {
+                    append("park on ch$c")
+                    if (v != null && v.sta > 0) append(" · ${v.sta} client${if (v.sta == 1) "" else "s"}")
+                    if (v != null && v.handshakes > 0) append(" · ${v.handshakes} caught here")
+                }
             }
             topAuto != null -> {
                 val c = topAuto.key
@@ -113,7 +127,7 @@ object HuntAdvisor {
             }
         }
 
-        // ── facts for the LLM (compact, pre-ranked; it only phrases these) ──────
+        // ── facts for the pet's voice (compact, pre-ranked; it only phrases these) ──────
         val facts = buildString {
             appendLine("- recommendation: $headline")
             if (channel != null) appendLine("- best channel: ch$channel")
@@ -123,7 +137,7 @@ object HuntAdvisor {
             if (warnings.isNotEmpty()) appendLine("- problem: ${warnings.first()}")
         }.trim()
 
-        return HuntAdvice(headline, channel, warnings, alertKey, facts)
+        return HuntAdvice(headline, channel, warnings, alertKey, voiceFacts = facts)
     }
 
     /** Coarse bucket so alertKey only changes on meaningful escalation, not every tick. */
