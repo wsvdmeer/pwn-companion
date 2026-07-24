@@ -10,17 +10,17 @@ import kotlinx.serialization.Serializable
  *
  * Maintains 6 floating-point personality variables (0.0–1.0) that evolve
  * based on WiFi events, decay toward baseline over time, and get compressed
- * into short trait strings for prompt injection.
+ * into short trait strings that drive the pet's disposition + tone.
  *
- * Architecture (per ChatGPT advice for small models):
+ * Architecture:
  *
  *   Rule engine  → applyEvent() updates variables
  *       ↓
  *   State compressor → toTraits() converts numbers to 3–5 trait strings
  *       ↓
- *   Prompt injection → "Personality right now: highly confident, mildly irritated"
+ *   Disposition → strongest trait picks the mood/tone (e.g. "highly confident, mildly irritated")
  *       ↓
- *   Qwen 0.5B → short sarcastic response shaped by traits
+ *   Voice → that mood selects a curated corpus line (deterministic — no model)
  *
  * Variables and their meaning:
  *   confidence   — rises with captures, falls with failures
@@ -293,7 +293,7 @@ class PersonalityStateEngine {
     )
 
     /**
-     * Convert the current state into 3–5 short trait strings for prompt injection.
+     * Convert the current state into 3–5 short trait strings that drive the disposition/tone.
      *
      * Priority order ensures the most extreme/interesting traits surface first.
      * Returns ["neutral"] if nothing is particularly pronounced.

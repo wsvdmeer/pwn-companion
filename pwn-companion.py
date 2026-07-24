@@ -94,13 +94,13 @@ log = logging.getLogger(__name__)
 
 
 # ============================================================
-#  AI Event Broadcaster - Sends WiFi Events to App for LLM
+#  AI Event Broadcaster - Sends WiFi Events to the App
 # ============================================================
 
 class PwnagotchiEventBroadcaster:
     """
-    Sends rich WiFi event data to the companion app for LLM personality responses
-    Enables the Pwnagotchi AI to react to WiFi events in real-time
+    Sends rich WiFi event data to the companion app, which drives its on-device
+    personality voice + advisor. Lets the companion react to WiFi events in real-time.
     """
 
     def __init__(self, websocket_send_func):

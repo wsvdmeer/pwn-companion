@@ -206,7 +206,7 @@ fun MainContentArea(
     }
 
 
-    // ── Push learning stats into AI so buildPrompt() can reference channel intel ─
+    // ── Push learning stats into the voice engine so its lines can reference channel intel ─
     LaunchedEffect(learningStats) {
         pwnagotchiVM.updateLearningStats(learningStats)
     }
@@ -244,7 +244,7 @@ fun MainContentArea(
 
     val device = connectedDevices.firstOrNull()
 
-    // ── deauth hunt advisor — phone-side analytics; the LLM only voices it ────
+    // ── deauth hunt advisor — phone-side analytics; the pet's voice only phrases it ────
     // Decides where to hunt from the device's own per-channel captures (autotune),
     // live client/AP counts and blind/thermal signals. Deterministic + always correct;
     // the pet's "where next?" just phrases advice.voiceFacts in-character.
