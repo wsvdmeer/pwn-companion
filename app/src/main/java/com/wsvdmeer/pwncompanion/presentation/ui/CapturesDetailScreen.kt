@@ -104,6 +104,7 @@ fun CapturesDetailScreen(
     val gentleCpu by CrackSettings.gentleCpu.collectAsState()
     val chargerOnly by CrackSettings.chargerOnly.collectAsState()
     val lowBatteryStop by CrackSettings.lowBatteryStop.collectAsState()
+    val quickCrack by CrackSettings.quickCrack.collectAsState()
 
     val primary = MaterialTheme.colorScheme.primary
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
@@ -288,9 +289,11 @@ fun CapturesDetailScreen(
             onCracked = { crackedOnly = !crackedOnly },
             showPower = crackable > 0,
             gentleCpu = gentleCpu, chargerOnly = chargerOnly, lowBatteryStop = lowBatteryStop,
+            quickCrack = quickCrack,
             onGentle = { CrackSettings.setGentleCpu(context, !gentleCpu) },
             onCharger = { CrackSettings.setChargerOnly(context, !chargerOnly) },
             onLowBatt = { CrackSettings.setLowBatteryStop(context, !lowBatteryStop) },
+            onQuick = { CrackSettings.setQuickCrack(context, !quickCrack) },
             onDismiss = { showFilters = false },
         )
     }
@@ -303,8 +306,8 @@ private fun FiltersSheet(
     geo: Boolean, crackableF: Boolean, cracked: Boolean,
     onGeo: () -> Unit, onCrackable: () -> Unit, onCracked: () -> Unit,
     showPower: Boolean,
-    gentleCpu: Boolean, chargerOnly: Boolean, lowBatteryStop: Boolean,
-    onGentle: () -> Unit, onCharger: () -> Unit, onLowBatt: () -> Unit,
+    gentleCpu: Boolean, chargerOnly: Boolean, lowBatteryStop: Boolean, quickCrack: Boolean,
+    onGentle: () -> Unit, onCharger: () -> Unit, onLowBatt: () -> Unit, onQuick: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val primary = MaterialTheme.colorScheme.primary
@@ -334,12 +337,14 @@ private fun FiltersSheet(
             }
             if (showPower) {
                 Spacer(Modifier.height(16.dp))
-                Text("cracking power", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
+                Text("cracking", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
                 Spacer(Modifier.height(6.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    // Quick: try only the top-N (fast, may miss) instead of the whole list.
+                    FilterChip("quick", quickCrack, primary, dim, onQuick)
                     FilterChip("easy cpu", gentleCpu, primary, dim, onGentle)
                     FilterChip("charger only", chargerOnly, primary, dim, onCharger)
                     FilterChip("stop <15%", lowBatteryStop, primary, dim, onLowBatt)
