@@ -369,7 +369,7 @@ So the crack is a straightforward **dictionary attack**: for each candidate pass
 
 **What it can't do (yet).** EAPOL 4-way handshakes (`WPA*02`) are cracked via the PTK + MIC, not a PMKID, so those show as `eapol` and aren't on-phone-crackable yet (Phase 3). And the big leap — hashing many candidates in parallel across SIMD lanes (or a GPU), the way desktop crackers do — is a much larger job left for later; today it's one candidate per core at a time.
 
-> On-phone cracking is **PMKID-only for now** (EAPOL / `WPA*02` is the next step). Like wpa-sec it's a dictionary attack — weak/common passwords fall, strong random ones won't — but it's fully local, private, and needs no internet or wpa-sec account.
+> On-phone cracking is **PMKID-only for now** (EAPOL / `WPA*02` is the next step — see the [roadmap](ROADMAP.md)). Like wpa-sec it's a dictionary attack — weak/common passwords fall, strong random ones won't — but it's fully local, private, and needs no internet or wpa-sec account.
 
 > ⚠️ **Only crack handshakes from networks you own or are explicitly authorized to test.** Cracking others' Wi-Fi is illegal in most jurisdictions — see the [responsible-use note](#pwncompanion) at the top.
 
