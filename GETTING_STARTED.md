@@ -75,7 +75,7 @@ Then restart: `sudo systemctl restart pwnagotchi`.
 
 **Or build it yourself:**
 ```bash
-# On your dev machine (needs JDK 17, Android SDK 36 — no NDK/CMake):
+# On your dev machine (needs JDK 17, Android SDK 36, + NDK & CMake for the native cracker):
 ./gradlew assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
@@ -107,6 +107,8 @@ api_key = "<your wpa-sec key>"
 api_url = "https://wpa-sec.stanev.org"
 download_results = true
 ```
+
+You can also crack **on the phone itself** — no server, no setup: on the `[ captures ]` screen, tap a `crack ▸` (PMKID) row and it runs a dictionary attack locally. See [README → Handshake cracking](README.md#handshake-cracking-wpa-sec--on-phone).
 
 ## Troubleshooting
 
