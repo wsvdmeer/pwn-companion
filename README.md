@@ -92,7 +92,7 @@ Two halves: the **Android app** (on your phone) and the **`pwn-companion` plugin
 
 ### 1. Build & install the Android app
 
-**Quickest — prebuilt APK:** grab the APK from the [**Releases** page](../../releases) and sideload it (enable "install unknown apps"). Note it's a **debug build** (debug-signed, for testing — not the Play Store); requires **Android 10+ on an arm64 device**. The voice engine is fully on-device — **no model download, no network needed on first launch** — so it just opens straight to the console. To build it yourself instead:
+**Quickest — prebuilt APK:** grab the APK from the [**Releases** page](../../releases) and sideload it (enable "install unknown apps"). It's a **release-signed** build (self-signed — sideload, not from the Play Store); requires **Android 10+ on an arm64 device**. The voice engine is fully on-device — **no model download, no network needed on first launch** — so it just opens straight to the console. To build it yourself instead:
 
 **Prerequisites**
 - **JDK 17** — required by the Android Gradle Plugin (9.2).

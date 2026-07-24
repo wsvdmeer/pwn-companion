@@ -71,7 +71,7 @@ Then restart: `sudo systemctl restart pwnagotchi`.
 
 ## Step 3 — Phone: install the app
 
-**Easiest — prebuilt APK:** download it from the [**Releases** page](../../releases) and sideload it (enable "install unknown apps" for your browser/file manager, then open the `.apk`). It's a **debug build** for testing — Android 10+ on an arm64 device.
+**Easiest — prebuilt APK:** download it from the [**Releases** page](../../releases) and sideload it (enable "install unknown apps" for your browser/file manager, then open the `.apk`). It's a **release-signed** build (self-signed; sideload) — Android 10+ on an arm64 device.
 
 **Or build it yourself:**
 ```bash
