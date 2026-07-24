@@ -330,7 +330,7 @@ A handshake only *counts* once it's cracked, so each capture is graded on-device
 - **crackable** — a PMKID or a full EAPOL 4-way handshake (yields a hash)
 - **partial** — an incomplete grab (e.g. only an M1 frame); can never be cracked
 
-The `[ captures ]` screen tags each catch and shows a `cracked · crackable · partial` split. A **`[ filters ]`** button opens a bottom sheet with the view filters (geo / crackable / cracked) and the cracking-power knobs, so the list stays uncluttered. There are two ways to actually crack — a free server, or the phone itself.
+The `[ captures ]` screen tags each catch and shows a `cracked · crackable · partial` split. A **`[ filters ]`** button opens a bottom sheet with the view filters (geo / crackable / cracked) and the cracking-power controls, so the list stays uncluttered. There are two ways to actually crack — a free server, or the phone itself.
 
 ### wpa-sec (server-side)
 
@@ -350,7 +350,7 @@ You can also crack **on the phone itself** — no server, no account, works offl
 - **Survives lock** — a foreground service keeps a long crack alive with the screen off (Doze / background-CPU throttling would otherwise stall it), showing progress in its notification.
 - **Resume** — the position is checkpointed continuously, so an interrupted crack (process kill, reboot, unplug, cancel) picks up where it left off instead of restarting from candidate 0.
 - **Lasting results** — a hit shows `pw: <password>` on the row and **persists across restarts**; a fully-searched miss is remembered as **`no match`** so it isn't re-offered.
-- **Gentle power knobs** (on by default, in the filters sheet) — **easy cpu** (cap workers at 2), **charger only** (pause while unplugged, auto-resume on replug), **stop <15%** (pause on low battery). Cracking is heavy — a hot phone, real battery draw — so these keep it civil; it's best run plugged in with the screen off.
+- **Gentle power controls** (on by default, in the filters sheet) — **easy cpu** (cap workers at 2), **charger only** (pause while unplugged, auto-resume on replug), **stop <15%** (pause on low battery). Cracking is heavy — a hot phone, real battery draw — so these keep it civil; it's best run plugged in with the screen off.
 
 #### How the crack actually works (PMKID + PBKDF2)
 
