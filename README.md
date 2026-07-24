@@ -336,6 +336,23 @@ You can also crack **on the phone itself** — no server, no account, works offl
 - **Lasting results** — a hit shows `pw: <password>` on the row and **persists across restarts**; a fully-searched miss is remembered as **`no match`** so it isn't re-offered.
 - **Gentle power knobs** (on by default, in the filters sheet) — **easy cpu** (cap workers at 2), **charger only** (pause while unplugged, auto-resume on replug), **stop <15%** (pause on low battery). Cracking is heavy — a hot phone, real battery draw — so these keep it civil; it's best run plugged in with the screen off.
 
+#### How the crack actually works (PMKID + PBKDF2)
+
+The attack targets the **PMKID** — a value some APs place in the very first handshake frame, derived purely from the network's password and the two MAC addresses, with **no client needed**. That's what makes it crackable *offline*: grab one frame, then guess passwords locally. WPA2 derives it in two steps:
+
+1. **PMK** (pairwise master key) = `PBKDF2-HMAC-SHA1(passphrase, ESSID, 4096, 32)` — the passphrase stretched over the network name, 4096 iterations, 32 bytes out.
+2. **PMKID** = `HMAC-SHA1(PMK, "PMK Name" ‖ AP_MAC ‖ STA_MAC)`, first 16 bytes.
+
+So the crack is a straightforward **dictionary attack**: for each candidate passphrase, compute its PMK, then its PMKID, and compare to the captured one — a match means that passphrase *is* the network's password. Nothing is reversed or decrypted; it's guess-and-check, which is exactly why only weak/dictionary passwords fall and strong random ones never will.
+
+**Why it's slow, and how we speed it up.** The entire cost is step 1 — PBKDF2's 4096 iterations are *deliberately* expensive (that's the job of a key-derivation function), ~8k SHA-1 compressions per candidate. We attack that three ways:
+
+- **Native** — the whole per-candidate computation runs in a small C library (`libwpacrack.so`): one JNI call per *batch* of candidates instead of thousands of JVM crypto calls each.
+- **Hardware SHA-1** — on arm64 it uses the **ARMv8 crypto-extension SHA-1 instructions** when the CPU has them (self-validated against a known digest at load, else it falls back to a software transform), for ~3× the pure-Kotlin path.
+- **All cores** — candidates are handed out from a single shared cursor, one worker per core. That shared, monotonic cursor is also what makes a crack **resumable**: everything below `cursor − workers` is guaranteed done, so that floor is checkpointed and a killed/paused crack picks up from it.
+
+**What it can't do (yet).** EAPOL 4-way handshakes (`WPA*02`) are cracked via the PTK + MIC, not a PMKID, so those show as `eapol` and aren't on-phone-crackable yet (Phase 3). And the big leap — hashing many candidates in parallel across SIMD lanes (or a GPU), the way desktop crackers do — is a much larger job left for later; today it's one candidate per core at a time.
+
 > On-phone cracking is **PMKID-only for now** (EAPOL / `WPA*02` is the next step). Like wpa-sec it's a dictionary attack — weak/common passwords fall, strong random ones won't — but it's fully local, private, and needs no internet or wpa-sec account.
 
 > ⚠️ **Only crack handshakes from networks you own or are explicitly authorized to test.** Cracking others' Wi-Fi is illegal in most jurisdictions — see the [responsible-use note](#pwncompanion) at the top.
