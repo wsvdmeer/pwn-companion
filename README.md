@@ -314,7 +314,7 @@ A handshake only *counts* once it's cracked, so each capture is graded on-device
 - **crackable** — a PMKID or a full EAPOL 4-way handshake (yields a hash)
 - **partial** — an incomplete grab (e.g. only an M1 frame); can never be cracked
 
-The `[ captures ]` screen tags each catch and shows a `cracked · crackable · partial` split (filter with `[ ] crackable` / `[ ] cracked`). There are two ways to actually crack — a free server, or the phone itself.
+The `[ captures ]` screen tags each catch and shows a `cracked · crackable · partial` split. A **`[ filters ]`** button opens a bottom sheet with the view filters (geo / crackable / cracked) and the cracking-power knobs, so the list stays uncluttered. There are two ways to actually crack — a free server, or the phone itself.
 
 ### wpa-sec (server-side)
 
@@ -339,6 +339,8 @@ You can also crack **on the phone itself** — no server, no account, works offl
 > On-phone cracking is **PMKID-only for now** (EAPOL / `WPA*02` is the next step). Like wpa-sec it's a dictionary attack — weak/common passwords fall, strong random ones won't — but it's fully local, private, and needs no internet or wpa-sec account.
 
 > ⚠️ **Only crack handshakes from networks you own or are explicitly authorized to test.** Cracking others' Wi-Fi is illegal in most jurisdictions — see the [responsible-use note](#pwncompanion) at the top.
+
+**Testing the cracker.** The crypto is pinned to a reference vector (ESSID `pwn-test-net`, passphrase `12345678`) in `WpaCrackerTest` — run with `./gradlew testDebugUnitTest`. The same vector self-checks the native library at load (and gates the hardware SHA-1 path). And **debug builds** show a `[ +test ]` button on the captures screen that injects a known-crackable capture, so the full tap → crack → cracked-password → persist → notify flow can be exercised without waiting on a real weak network (compiled out of release builds).
 
 ## Device Vitals
 
