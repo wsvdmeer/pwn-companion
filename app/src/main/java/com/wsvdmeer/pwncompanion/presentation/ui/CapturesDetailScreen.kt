@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.sp
 import com.wsvdmeer.pwncompanion.crack.WpaCracker
 import com.wsvdmeer.pwncompanion.models.CaptureEntry
 import com.wsvdmeer.pwncompanion.models.GpsData
+import com.wsvdmeer.pwncompanion.BuildConfig
 import com.wsvdmeer.pwncompanion.crack.CrackEngine
 import com.wsvdmeer.pwncompanion.crack.CrackSettings
 import com.wsvdmeer.pwncompanion.crack.CrackState
@@ -146,6 +147,14 @@ fun CapturesDetailScreen(
                 modifier = Modifier.clickable { onBack() }
             )
             Text("[ CAPTURES ]", color = primary, fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = TerminalMono)
+            // Debug-only: inject a known-crackable capture to test the crack flow. Stripped in release.
+            if (BuildConfig.DEBUG) {
+                Text(
+                    "[ +test ]",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontFamily = TerminalMono,
+                    modifier = Modifier.clickable { viewModel.injectTestCapture() }
+                )
+            }
         }
         ConsoleRuleLocal()
 

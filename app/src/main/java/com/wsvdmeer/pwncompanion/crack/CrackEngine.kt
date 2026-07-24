@@ -112,6 +112,16 @@ object CrackEngine {
     /** Clear a finished (Done/Failed) banner once the processor is idle. */
     fun dismiss() { if (job?.isActive != true) _state.value = CrackState.Idle }
 
+    /** Forget a network's crack result + checkpoint, making it crackable again (e.g. for testing). */
+    fun forget(context: Context, bssid: String) {
+        val key = norm(bssid)
+        _cracked.update { it - key }
+        _exhausted.update { it - key }
+        clearCheckpoint(context.applicationContext, key)
+        context.applicationContext.getSharedPreferences(RESULTS_PREFS, Context.MODE_PRIVATE)
+            .edit().remove(key).apply()
+    }
+
     private fun start(context: Context) {
         if (job?.isActive == true) return   // processor already draining the queue
         CrackSettings.ensureLoaded(context)
