@@ -30,7 +30,9 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -94,6 +96,7 @@ fun CapturesDetailScreen(
     var geoOnly by remember { mutableStateOf(false) }
     var crackedOnly by remember { mutableStateOf(false) }
     var crackableOnly by remember { mutableStateOf(false) }
+    var showFilters by remember { mutableStateOf(false) }
 
     // Gentle-knob power settings for cracking (persisted; also read by CrackEngine).
     val context = LocalContext.current
@@ -176,45 +179,33 @@ fun CapturesDetailScreen(
         }
 
         // ── search + filters ────────────────────────────────────────────────
+        // Compact: full-width search + a single [ filters ] button that opens a bottom sheet with
+        // the toggles + cracking-power knobs, so the screen isn't a wall of chips.
         Spacer(Modifier.height(6.dp))
-        // Bordered monospace search field (full width).
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, MaterialTheme.colorScheme.outline)
-                .padding(horizontal = 8.dp, vertical = 6.dp)
-        ) {
-            Text("/", color = dim, fontSize = 12.sp, fontFamily = TerminalMono)
-            Spacer(Modifier.width(6.dp))
-            SearchField(query, onQuery = { query = it }, primary = primary, dim = dim)
-        }
-        Spacer(Modifier.height(6.dp))
-        // Filter chips: geo · crackable (on-phone PMKID) · cracked.
+        val activeFilters = (if (geoOnly) 1 else 0) + (if (crackableOnly) 1 else 0) + (if (crackedOnly) 1 else 0)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            FilterChip("geo", geoOnly, primary, dim) { geoOnly = !geoOnly }
-            FilterChip("crackable", crackableOnly, primary, dim) { crackableOnly = !crackableOnly }
-            FilterChip("cracked", crackedOnly, primary, dim) { crackedOnly = !crackedOnly }
-        }
-        // Power knobs for on-phone cracking — only shown when there's something to crack.
-        // Scrollable so three chips + label never overflow a narrow screen.
-        if (crackable > 0) {
-            Spacer(Modifier.height(6.dp))
             Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier
+                    .weight(1f)
+                    .border(1.dp, MaterialTheme.colorScheme.outline)
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
             ) {
-                Text(
-                    "power",
-                    color = dim, fontSize = 11.sp, fontFamily = TerminalMono,
-                    modifier = Modifier.padding(top = 7.dp)
-                )
-                FilterChip("easy cpu", gentleCpu, primary, dim) { CrackSettings.setGentleCpu(context, !gentleCpu) }
-                FilterChip("charger only", chargerOnly, primary, dim) { CrackSettings.setChargerOnly(context, !chargerOnly) }
-                FilterChip("stop <15%", lowBatteryStop, primary, dim) { CrackSettings.setLowBatteryStop(context, !lowBatteryStop) }
+                Text("/", color = dim, fontSize = 12.sp, fontFamily = TerminalMono)
+                Spacer(Modifier.width(6.dp))
+                SearchField(query, onQuery = { query = it }, primary = primary, dim = dim)
             }
+            Text(
+                if (activeFilters > 0) "[ filters · $activeFilters ]" else "[ filters ]",
+                color = if (activeFilters > 0) primary else dim,
+                fontSize = 12.sp, fontFamily = TerminalMono,
+                modifier = Modifier
+                    .border(1.dp, if (activeFilters > 0) primary else MaterialTheme.colorScheme.outline)
+                    .clickable { showFilters = true }
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+            )
         }
         Spacer(Modifier.height(6.dp))
         Text(
@@ -286,6 +277,74 @@ fun CapturesDetailScreen(
                 CaptureDetailRow(c, primary, dim, onSurface, onCrack = onTap, rowState = rowState)
             }
             item { Spacer(Modifier.height(24.dp)) }
+        }
+    }
+
+    if (showFilters) {
+        FiltersSheet(
+            geo = geoOnly, crackableF = crackableOnly, cracked = crackedOnly,
+            onGeo = { geoOnly = !geoOnly },
+            onCrackable = { crackableOnly = !crackableOnly },
+            onCracked = { crackedOnly = !crackedOnly },
+            showPower = crackable > 0,
+            gentleCpu = gentleCpu, chargerOnly = chargerOnly, lowBatteryStop = lowBatteryStop,
+            onGentle = { CrackSettings.setGentleCpu(context, !gentleCpu) },
+            onCharger = { CrackSettings.setChargerOnly(context, !chargerOnly) },
+            onLowBatt = { CrackSettings.setLowBatteryStop(context, !lowBatteryStop) },
+            onDismiss = { showFilters = false },
+        )
+    }
+}
+
+/** Bottom sheet holding the capture filters + cracking-power knobs (keeps the screen uncluttered). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FiltersSheet(
+    geo: Boolean, crackableF: Boolean, cracked: Boolean,
+    onGeo: () -> Unit, onCrackable: () -> Unit, onCracked: () -> Unit,
+    showPower: Boolean,
+    gentleCpu: Boolean, chargerOnly: Boolean, lowBatteryStop: Boolean,
+    onGentle: () -> Unit, onCharger: () -> Unit, onLowBatt: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF02060A),
+        contentColor = primary,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 28.dp)
+        ) {
+            Text("[ FILTERS ]", color = primary, fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = TerminalMono)
+            Spacer(Modifier.height(12.dp))
+            Text("show", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
+            Spacer(Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterChip("geo", geo, primary, dim, onGeo)
+                FilterChip("crackable", crackableF, primary, dim, onCrackable)
+                FilterChip("cracked", cracked, primary, dim, onCracked)
+            }
+            if (showPower) {
+                Spacer(Modifier.height(16.dp))
+                Text("cracking power", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip("easy cpu", gentleCpu, primary, dim, onGentle)
+                    FilterChip("charger only", chargerOnly, primary, dim, onCharger)
+                    FilterChip("stop <15%", lowBatteryStop, primary, dim, onLowBatt)
+                }
+            }
         }
     }
 }
