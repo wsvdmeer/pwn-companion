@@ -371,7 +371,7 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
      * Tidy + hard-shorten a line for the pwnagotchi's tiny e-ink bubble. Stock voice.py
      * lines are one short clause (~12–34 chars); ours were running 1.5–2.5× that and
      * spanning two sentences. So: strip quotes/newlines, keep only the FIRST sentence,
-     * then cap length on a whole-word boundary. Safety net on top of the short prompt.
+     * then cap length on a whole-word boundary. Safety net on top of the curated line.
      */
     private fun cleanLine(raw: String): String {
         var s = raw.trim().replace(Regex("\\s+"), " ").trim('"', '\'', '`', ' ', '*')
@@ -559,11 +559,11 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
 
     /**
      * Voice a phone-computed hunt recommendation ("where next?") in-character. The
-     * recommendation is DECIDED by HuntAdvisor (Kotlin); the model only phrases the
-     * pre-chewed facts, so it can never invent a wrong channel. If the model is missing,
-     * blank, or errors, we fall back to the deterministic headline — the operator always
-     * gets a correct answer. User-initiated (also used for proactive alerts, which are
-     * rate-limited by their stable alertKey upstream).
+     * recommendation is DECIDED by HuntAdvisor (Kotlin); the voice only wraps the
+     * pre-chewed facts in a curated line, so it can never invent a wrong channel. If no
+     * in-character line fits, we fall back to the deterministic headline — the operator
+     * always gets a correct answer. User-initiated (also used for proactive alerts, which
+     * are rate-limited by their stable alertKey upstream).
      */
     fun speakAdvice(@Suppress("UNUSED_PARAMETER") facts: String, fallback: String, poolCategory: String? = null) {
         // Deterministic: the advisor line IS the fallback — HuntAdvisor's headline / the alert

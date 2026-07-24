@@ -43,7 +43,7 @@ class MessageHandler {
     data class NetworkEventUpdate(
         val deviceId: String,
         val eventType: String,       // e.g. "handshakes_captured", "network_discovered"
-        val description: String,     // human-readable, ready to pass to LLM
+        val description: String,     // human-readable summary of the event
         val network: String? = null,
         val count: Int = 0,
         val signal: Int? = null,
