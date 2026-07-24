@@ -136,7 +136,23 @@ sudo systemctl restart pwnagotchi
 ```toml
 [main.plugins.pwn-companion]
 enabled = true
-show_on_screen = true
+show_on_screen = true        # draw the connection/GPS status on the e-ink screen
+
+# --- all optional (sensible defaults; only set what you want to change) ---
+# handshakes_dir       = "/home/pi/handshakes"   # where pwnagotchi writes captures (+ our .gps.json / .22000 sidecars)
+# push_image_interval  = 1     # seconds between e-ink screen frames sent to the app
+# request_gps_interval = 5     # seconds between GPS requests to the phone
+# On-screen GPS overlay — toggle fields + place them at [x, y] on the e-ink:
+# show_latitude  = true
+# show_longitude = true
+# show_accuracy  = true
+# show_altitude  = false
+# status_position    = [0, 0]
+# gps_position       = [0, 72]
+# latitude_position  = [0, 72]
+# longitude_position = [0, 82]
+# accuracy_position  = [0, 92]
+# altitude_position  = [0, 102]
 ```
 
 **Optional — cracking via [wpa-sec](https://wpa-sec.stanev.org)** (free community cracking; needs an API key):
