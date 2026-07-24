@@ -247,13 +247,13 @@ fun MainContentArea(
     // ── deauth hunt advisor — phone-side analytics; the LLM only voices it ────
     // Decides where to hunt from the device's own per-channel captures (autotune),
     // live client/AP counts and blind/thermal signals. Deterministic + always correct;
-    // the pet's "where next?" just phrases advice.llmFacts in-character.
+    // the pet's "where next?" just phrases advice.voiceFacts in-character.
     val minsSinceCatch = remember(captures) {
         captures.mapNotNull { it.timestamp }.maxOrNull()?.let {
             ((System.currentTimeMillis() / 1000) - it) / 60
         }
     }
-    val advice = remember(device?.autotuneChannels, telemetry, learningStats, isAutoMode, minsSinceCatch) {
+    val advice = remember(device?.autotuneChannels, telemetry, learningStats, isAutoMode, minsSinceCatch, channelPriority) {
         val auto = device?.autotuneChannels
             ?.mapNotNull { (k, v) -> k.toIntOrNull()?.let { it to v } }?.toMap() ?: emptyMap()
         com.wsvdmeer.pwncompanion.ai.HuntAdvisor.recommend(
@@ -262,6 +262,7 @@ fun MainContentArea(
             learning = learningStats,
             isAutoMode = isAutoMode,
             minutesSinceLastCatch = minsSinceCatch,
+            steeredChannel = channelPriority.firstOrNull(),   // name the bandit's actual pick
         )
     }
     // Proactively voice a NEW alert (blind / hot / no-clients / dry) on onset, and a
@@ -272,7 +273,7 @@ fun MainContentArea(
         val key = a?.alertKey
         if (connectedDevices.isNotEmpty()) {
             if (key != null && a!!.warnings.isNotEmpty()) {
-                pwnagotchiVM.speakAdvice(a.llmFacts, a.warnings.first())          // onset
+                pwnagotchiVM.speakAdvice(a.voiceFacts, a.warnings.first())          // onset
             } else if (key == null && prevAlertKey != null) {
                 val what = when {                                                 // recovered
                     prevAlertKey!!.startsWith("blind")     -> "I can see the air again"
