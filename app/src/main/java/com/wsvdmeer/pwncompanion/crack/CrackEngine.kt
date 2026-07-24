@@ -61,6 +61,12 @@ object CrackEngine {
     private val _cracked = MutableStateFlow<Map<String, String>>(emptyMap())
     val cracked: StateFlow<Map<String, String>> = _cracked.asStateFlow()
 
+    // Networks whose whole wordlist was searched with no hit — a lasting "no match" status so a
+    // finished crack shows a result and you don't burn hours re-running the same one.
+    private val _exhausted = MutableStateFlow<Set<String>>(emptySet())
+    val exhausted: StateFlow<Set<String>> = _exhausted.asStateFlow()
+    @Volatile private var resultsLoaded = false
+
     private var job: Job? = null
     private val skip = AtomicBoolean(false)
     private val paused = AtomicBoolean(false)
@@ -73,8 +79,10 @@ object CrackEngine {
     fun enqueue(context: Context, capture: CaptureEntry) {
         val hash = capture.hash22000 ?: return
         if (!WpaCracker.isCrackablePmkid(hash)) return
+        loadResults(context.applicationContext)
         val key = norm(capture.bssid)
-        if (_cracked.value.containsKey(key)) return
+        if (_cracked.value.containsKey(key)) return          // already cracked
+        if (_exhausted.value.contains(key)) return           // already fully searched, no match
         if (runningKey() == key) return
         var added = false
         _queue.update { q ->
@@ -222,6 +230,7 @@ object CrackEngine {
             pw != null -> {
                 clearCheckpoint(context, key)
                 _cracked.update { it + (key to pw) }
+                persistResultCracked(context, key, pw)   // survives app restart
                 _state.value = CrackState.Done(bssid, ssid, pw)
                 runCatching { NotificationHelper.notifyCracked(context, ssid, pw) }
                 Log.i(TAG, "on-phone crack SUCCESS: $ssid -> $pw")
@@ -236,8 +245,10 @@ object CrackEngine {
                 true
             }
             else -> {
-                // Wordlist exhausted — nothing left to resume.
+                // Wordlist fully searched, no hit — record a lasting "no match" so the row shows
+                // a result and won't be offered for another multi-hour re-run.
                 clearCheckpoint(context, key)
+                persistResultExhausted(context, key)
                 _state.value = CrackState.Failed(bssid, ssid, "not in wordlist ($total tried)")
                 if (queueLeft > 0) delay(1500)
                 true
@@ -266,6 +277,42 @@ object CrackEngine {
 
     private fun clearCheckpoint(context: Context, bssidKey: String) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(bssidKey).apply()
+    }
+
+    // ── Persisted crack results ─────────────────────────────────────────────────
+    // Outcomes survive app restart / process death so a finished crack keeps its status:
+    // "c:<password>" for a hit (also re-overlaid onto captures), "x" for a fully-searched miss.
+    private const val RESULTS_PREFS = "crack_results"
+
+    /** Load persisted crack outcomes into memory (cracked passwords + "no match" set). Idempotent. */
+    fun loadResults(context: Context) {
+        if (resultsLoaded) return
+        resultsLoaded = true
+        runCatching {
+            val all = context.getSharedPreferences(RESULTS_PREFS, Context.MODE_PRIVATE).all
+            val crackedNow = HashMap<String, String>()
+            val exh = HashSet<String>()
+            for ((k, v) in all) {
+                val s = v as? String ?: continue
+                when {
+                    s.startsWith("c:") -> crackedNow[k] = s.substring(2)
+                    s == "x" -> exh.add(k)
+                }
+            }
+            if (crackedNow.isNotEmpty()) _cracked.update { crackedNow + it }
+            if (exh.isNotEmpty()) _exhausted.value = exh
+        }
+    }
+
+    private fun persistResultCracked(context: Context, bssidKey: String, password: String) {
+        context.getSharedPreferences(RESULTS_PREFS, Context.MODE_PRIVATE)
+            .edit().putString(bssidKey, "c:$password").apply()
+    }
+
+    private fun persistResultExhausted(context: Context, bssidKey: String) {
+        context.getSharedPreferences(RESULTS_PREFS, Context.MODE_PRIVATE)
+            .edit().putString(bssidKey, "x").apply()
+        _exhausted.update { it + bssidKey }
     }
 
     /** Worker count, honouring the gentle knobs: cap at 2 in easy-CPU mode, else half on battery
