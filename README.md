@@ -19,7 +19,7 @@ The guiding idea: **move the thinking to the phone** (which has compute, GPS, an
 
 **Requires Android 10+ (API 29)** on an arm64 device, plus a [Pwnagotchi](https://github.com/jayofelony/pwnagotchi) running the [`bt-tether`](https://github.com/wsvdmeer/pwnagotchi-plugins) + `pwn-companion.py` plugins.
 
-> ⚠️ **Responsible use.** PwnCompanion is a companion for authorized Wi-Fi security research and education, paired with a [Pwnagotchi](https://github.com/jayofelony/pwnagotchi). Capturing handshakes, sending deauthentication frames, and cracking passwords may be illegal without permission — only use it on networks you **own or have explicit authorization to test**. You are responsible for complying with your local laws. Licensed under **GPL-3.0** (see [`LICENSE`](LICENSE)).
+> ⚠️ **Responsible use & no warranty.** PwnCompanion is a companion for authorized Wi-Fi security research and education, paired with a [Pwnagotchi](https://github.com/jayofelony/pwnagotchi). Capturing handshakes, sending deauthentication frames, and cracking passwords may be illegal without permission — only use it on networks you **own or have explicit authorization to test**. You are responsible for complying with your local laws. The software is provided **as-is, without warranty of any kind — use at your own risk** (see GPL-3.0 §15–16). Licensed under **GPL-3.0** (see [`LICENSE`](LICENSE)).
 
 > 🚀 New here? Start with **[GETTING_STARTED.md](GETTING_STARTED.md)** — it walks through both halves (the `bt-tether` + `pwn-companion.py` plugins on the Pi, and the app on your phone).
 
@@ -372,6 +372,8 @@ So the crack is a straightforward **dictionary attack**: for each candidate pass
 > On-phone cracking is **PMKID-only for now** (EAPOL / `WPA*02` is the next step). Like wpa-sec it's a dictionary attack — weak/common passwords fall, strong random ones won't — but it's fully local, private, and needs no internet or wpa-sec account.
 
 > ⚠️ **Only crack handshakes from networks you own or are explicitly authorized to test.** Cracking others' Wi-Fi is illegal in most jurisdictions — see the [responsible-use note](#pwncompanion) at the top.
+
+> 🔥 **On-phone cracking is hard on your phone** — it pins the CPU at 100% for a long time (minutes to hours), so expect real heat, heavy battery drain, and the wear that comes with sustained load. The power controls (easy cpu / charger only / stop <15%) keep it in check; run it plugged in with the screen off. **At your own risk.**
 
 **Testing the cracker.** The crypto is pinned to a reference vector (ESSID `pwn-test-net`, passphrase `12345678`) in `WpaCrackerTest` — run with `./gradlew testDebugUnitTest`. The same vector self-checks the native library at load (and gates the hardware SHA-1 path). And **debug builds** show a `[ +test ]` button on the captures screen that injects a known-crackable capture, so the full tap → crack → cracked-password → persist → notify flow can be exercised without waiting on a real weak network (compiled out of release builds).
 
