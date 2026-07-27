@@ -671,10 +671,13 @@ class NetworkService(private val context: Context) {
     ): List<com.wsvdmeer.pwncompanion.models.CaptureEntry> {
         if (incoming.isNullOrEmpty()) return existing
         val byKey = LinkedHashMap<String, com.wsvdmeer.pwncompanion.models.CaptureEntry>()
-        existing.forEach { byKey[it.key] = it }
+        existing.forEach { byKey[it.key] = it.copy(timestamp = normalizeTs(it.timestamp)) }
         // Incoming wins on collision, BUT carry forward a cracked password AND the 22000
         // hash the fresh record lacks (a re-scan can omit either), so reconnects don't wipe them.
-        incoming.forEach { inc ->
+        // Also normalize the timestamp to seconds — live geotagged captures arrive in ms (the
+        // phone's GPS clock) while scanned ones are in seconds, which mangled sort order + age.
+        incoming.forEach { inc0 ->
+            val inc = inc0.copy(timestamp = normalizeTs(inc0.timestamp))
             val prev = byKey[inc.key]
             byKey[inc.key] = if (prev != null && (inc.password == null && prev.password != null ||
                                                   inc.hash22000 == null && prev.hash22000 != null))
@@ -683,6 +686,14 @@ class NetworkService(private val context: Context) {
             else inc
         }
         return byKey.values.sortedByDescending { it.timestamp ?: 0L }
+    }
+
+    /** Coerce a capture timestamp to Unix **seconds**: values that look like milliseconds
+     * (> ~year 5138 in seconds) are divided by 1000. Fixes mixed ms/s units from the plugin. */
+    private fun normalizeTs(ts: Long?): Long? = when {
+        ts == null -> null
+        ts > 100_000_000_000L -> ts / 1000
+        else -> ts
     }
 
     /** MAC → comparable form: lowercase hex, separators stripped. */
