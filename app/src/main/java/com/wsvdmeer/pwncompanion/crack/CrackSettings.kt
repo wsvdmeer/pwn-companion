@@ -21,10 +21,12 @@ object CrackSettings {
     private val _chargerOnly = MutableStateFlow(true)          // only crack while plugged in
     private val _lowBatteryStop = MutableStateFlow(true)       // pause under LOW_PCT on battery
     private val _quickCrack = MutableStateFlow(false)          // try only the top-N (fast, may miss)
+    private val _mangle = MutableStateFlow(false)              // apply word-mangling rules (slower, wider)
     val gentleCpu: StateFlow<Boolean> = _gentleCpu.asStateFlow()
     val chargerOnly: StateFlow<Boolean> = _chargerOnly.asStateFlow()
     val lowBatteryStop: StateFlow<Boolean> = _lowBatteryStop.asStateFlow()
     val quickCrack: StateFlow<Boolean> = _quickCrack.asStateFlow()
+    val mangle: StateFlow<Boolean> = _mangle.asStateFlow()
 
     /** Load persisted values once (safe to call repeatedly). */
     fun ensureLoaded(context: Context) {
@@ -34,6 +36,7 @@ object CrackSettings {
         _chargerOnly.value = p.getBoolean("chargerOnly", true)
         _lowBatteryStop.value = p.getBoolean("lowBatteryStop", true)
         _quickCrack.value = p.getBoolean("quickCrack", false)
+        _mangle.value = p.getBoolean("mangle", false)
         loaded = true
     }
 
@@ -41,6 +44,7 @@ object CrackSettings {
     fun setChargerOnly(context: Context, v: Boolean) = persist(context, "chargerOnly", _chargerOnly, v)
     fun setLowBatteryStop(context: Context, v: Boolean) = persist(context, "lowBatteryStop", _lowBatteryStop, v)
     fun setQuickCrack(context: Context, v: Boolean) = persist(context, "quickCrack", _quickCrack, v)
+    fun setMangle(context: Context, v: Boolean) = persist(context, "mangle", _mangle, v)
 
     private fun persist(context: Context, key: String, flow: MutableStateFlow<Boolean>, v: Boolean) {
         flow.value = v

@@ -109,6 +109,7 @@ fun CapturesDetailScreen(
     val chargerOnly by CrackSettings.chargerOnly.collectAsState()
     val lowBatteryStop by CrackSettings.lowBatteryStop.collectAsState()
     val quickCrack by CrackSettings.quickCrack.collectAsState()
+    val mangle by CrackSettings.mangle.collectAsState()
 
     val primary = MaterialTheme.colorScheme.primary
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
@@ -300,11 +301,12 @@ fun CapturesDetailScreen(
             onCracked = { crackedOnly = !crackedOnly },
             showPower = crackable > 0,
             gentleCpu = gentleCpu, chargerOnly = chargerOnly, lowBatteryStop = lowBatteryStop,
-            quickCrack = quickCrack,
+            quickCrack = quickCrack, mangle = mangle,
             onGentle = { CrackSettings.setGentleCpu(context, !gentleCpu) },
             onCharger = { CrackSettings.setChargerOnly(context, !chargerOnly) },
             onLowBatt = { CrackSettings.setLowBatteryStop(context, !lowBatteryStop) },
             onQuick = { CrackSettings.setQuickCrack(context, !quickCrack) },
+            onMangle = { CrackSettings.setMangle(context, !mangle) },
             onDismiss = { showFilters = false },
         )
     }
@@ -434,7 +436,9 @@ private fun FiltersSheet(
     onGeo: () -> Unit, onCrackable: () -> Unit, onCracked: () -> Unit,
     showPower: Boolean,
     gentleCpu: Boolean, chargerOnly: Boolean, lowBatteryStop: Boolean, quickCrack: Boolean,
+    mangle: Boolean,
     onGentle: () -> Unit, onCharger: () -> Unit, onLowBatt: () -> Unit, onQuick: () -> Unit,
+    onMangle: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val primary = MaterialTheme.colorScheme.primary
@@ -472,6 +476,8 @@ private fun FiltersSheet(
                 ) {
                     // Quick: try only the top-N (fast, may miss) instead of the whole list.
                     FilterChip("quick", quickCrack, primary, dim, onQuick)
+                    // Mangle: expand each word into common variants (Word123, Welkom2024!, …) — wider, slower.
+                    FilterChip("mangle", mangle, primary, dim, onMangle)
                     FilterChip("easy cpu", gentleCpu, primary, dim, onGentle)
                     FilterChip("charger only", chargerOnly, primary, dim, onCharger)
                     FilterChip("stop <15%", lowBatteryStop, primary, dim, onLowBatt)
