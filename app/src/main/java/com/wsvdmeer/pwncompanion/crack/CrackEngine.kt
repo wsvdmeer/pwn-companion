@@ -244,8 +244,14 @@ object CrackEngine {
             val w = words[(idx / mult).toInt()]
             return if (mangle) MangleRules.apply(w, (idx % mult).toInt()) else w
         }
-        // Human-readable "what · how" for the progress banner (e.g. "eapol · native").
-        val mode = (if (pmkidH != null) "pmkid" else "eapol") + " · " + (if (useNative) "native" else "cpu")
+        // Human-readable "what · how · which options" for the progress banner, e.g.
+        // "eapol · native · mangle". quick/mangle are locked in for this run, so snapshot them here.
+        val mode = buildString {
+            append(if (pmkidH != null) "pmkid" else "eapol")
+            append(" · ").append(if (useNative) "native" else "cpu")
+            if (quick) append(" · quick")
+            if (mangle) append(" · mangle")
+        }
         _state.value = CrackState.Running(bssid, ssid, startIndex, limit, 0, mode)
         if (!quick && startIndex > 0) Log.i(TAG, "resuming $ssid from $startIndex/$limit")
         Log.i(TAG, "cracking $ssid: ${if (quick) "quick" else "full"}, $cores workers, " +
