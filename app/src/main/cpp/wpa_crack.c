@@ -210,6 +210,25 @@ static void wpa_pmkid(const uint8_t pmk[32], const uint8_t ap[6], const uint8_t 
     uint8_t full[20]; hmac_compute(&h, msg, 20, full); memcpy(out16, full, 16);
 }
 
+// ---------- WPA2 EAPOL (WPA*02, key-version 2 / HMAC-SHA1) ----------
+// KCK = PTK[0:16], via the IEEE 802.11 PRF. B is the caller-prepared sorted material
+// (min(AA,SA)||max(AA,SA)||min(ANonce,SNonce)||max(ANonce,SNonce)). Block i=0 alone yields the KCK.
+static void wpa_kck(const uint8_t pmk[32], const uint8_t *b, size_t blen, uint8_t out16[16]) {
+    hmac_ctx h; hmac_init(&h, pmk, 32);
+    uint8_t msg[128];
+    size_t o = 22; memcpy(msg, "Pairwise key expansion", 22);   // A (no null terminator)
+    msg[o++] = 0x00;                                            // separator
+    memcpy(msg + o, b, blen); o += blen;
+    msg[o++] = 0x00;                                            // block index i = 0
+    uint8_t full[20]; hmac_compute(&h, msg, o, full); memcpy(out16, full, 16);
+}
+
+// MIC (key-version 2) = HMAC-SHA1(KCK, eapol)[:16], eapol having its MIC field pre-zeroed.
+static void wpa_mic(const uint8_t kck[16], const uint8_t *eapol, size_t elen, uint8_t out16[16]) {
+    hmac_ctx h; hmac_init(&h, kck, 16);
+    uint8_t full[20]; hmac_compute(&h, eapol, elen, full); memcpy(out16, full, 16);
+}
+
 // ---------- JNI ----------
 // Returns the index of the first candidate whose PMKID matches, or -1 if none in this batch.
 JNIEXPORT jint JNICALL
@@ -237,6 +256,59 @@ Java_com_wsvdmeer_pwncompanion_crack_NativeWpaCracker_crackBatch(
             uint8_t pmk[32]; wpa_pmk((const uint8_t *)c, clen, essid, elen, iter, pmk);
             uint8_t pid[16]; wpa_pmkid(pmk, ap, sta, pid);
             if (memcmp(pid, target, 16) == 0) result = i;
+            (*env)->ReleaseStringUTFChars(env, s, c);
+        }
+        (*env)->DeleteLocalRef(env, s);
+        if (result >= 0) return result;
+    }
+    return -1;
+}
+
+// EAPOL (WPA*02, key-version 2). Same PBKDF2 hot path, then PTK/KCK + MIC per candidate.
+// Returns the index of the first candidate whose MIC matches, or -1 if none in this batch.
+JNIEXPORT jint JNICALL
+Java_com_wsvdmeer_pwncompanion_crack_NativeWpaCracker_crackBatchEapol(
+        JNIEnv *env, jclass clazz,
+        jbyteArray essid_, jbyteArray ap_, jbyteArray sta_, jbyteArray mic_,
+        jbyteArray anonce_, jbyteArray eapol_, jint iter, jobjectArray candidates) {
+    ensure_hw();
+    jsize elen = (*env)->GetArrayLength(env, essid_);
+    if (elen > 32) elen = 32;
+    uint8_t essid[32], ap[6], sta[6], target[16], anonce[32];
+    (*env)->GetByteArrayRegion(env, essid_, 0, elen, (jbyte *)essid);
+    (*env)->GetByteArrayRegion(env, ap_, 0, 6, (jbyte *)ap);
+    (*env)->GetByteArrayRegion(env, sta_, 0, 6, (jbyte *)sta);
+    (*env)->GetByteArrayRegion(env, mic_, 0, 16, (jbyte *)target);
+    (*env)->GetByteArrayRegion(env, anonce_, 0, 32, (jbyte *)anonce);
+
+    jsize eaplen = (*env)->GetArrayLength(env, eapol_);
+    if (eaplen < 49 || eaplen > 512) return -1;   // malformed, or too big for the stack buffer
+    uint8_t eapol[512];
+    (*env)->GetByteArrayRegion(env, eapol_, 0, eaplen, (jbyte *)eapol);
+
+    // SNonce is the frame's key-nonce field (bytes 17..48). Build the PRF's sorted material B once
+    // per handshake: min(AA,SA) || max(AA,SA) || min(ANonce,SNonce) || max(ANonce,SNonce).
+    uint8_t snonce[32]; memcpy(snonce, eapol + 17, 32);
+    uint8_t B[76];
+    const uint8_t *m1 = ap, *m2 = sta;
+    if (memcmp(ap, sta, 6) > 0) { m1 = sta; m2 = ap; }
+    memcpy(B, m1, 6); memcpy(B + 6, m2, 6);
+    const uint8_t *n1 = anonce, *n2 = snonce;
+    if (memcmp(anonce, snonce, 32) > 0) { n1 = snonce; n2 = anonce; }
+    memcpy(B + 12, n1, 32); memcpy(B + 44, n2, 32);
+
+    jsize n = (*env)->GetArrayLength(env, candidates);
+    for (jsize i = 0; i < n; i++) {
+        jstring s = (jstring)(*env)->GetObjectArrayElement(env, candidates, i);
+        if (!s) continue;
+        const char *c = (*env)->GetStringUTFChars(env, s, NULL);
+        jint result = -1;
+        if (c) {
+            size_t clen = strlen(c);
+            uint8_t pmk[32]; wpa_pmk((const uint8_t *)c, clen, essid, elen, iter, pmk);
+            uint8_t kck[16]; wpa_kck(pmk, B, 76, kck);
+            uint8_t mic[16]; wpa_mic(kck, eapol, eaplen, mic);
+            if (memcmp(mic, target, 16) == 0) result = i;
             (*env)->ReleaseStringUTFChars(env, s, c);
         }
         (*env)->DeleteLocalRef(env, s);
