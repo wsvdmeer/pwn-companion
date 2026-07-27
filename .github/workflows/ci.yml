@@ -40,7 +40,19 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install NDK + CMake (native cracker)
-        run: sdkmanager "cmake;3.22.1" "ndk;27.0.12077973"
+        # The NDK is a ~1 GB download and sdkmanager occasionally serves a corrupt zip
+        # ("Error on ZipFile unknown archive"), so retry a few times before giving up.
+        run: |
+          n=0
+          until sdkmanager "cmake;3.22.1" "ndk;27.0.12077973"; do
+            n=$((n + 1))
+            if [ "$n" -ge 3 ]; then
+              echo "sdkmanager failed after $n attempts" >&2
+              exit 1
+            fi
+            echo "sdkmanager attempt $n failed (likely a bad NDK download); retrying in 10s…"
+            sleep 10
+          done
 
       - name: Cache Gradle
         uses: actions/cache@v4
