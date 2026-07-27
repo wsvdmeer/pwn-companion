@@ -890,18 +890,24 @@ private fun ConsoleBarRow(key: String, fraction: Float, value: String, color: Co
         Text(
             key.padEnd(7) + ": ",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 12.sp, lineHeight = 18.sp
+            fontSize = 12.sp, lineHeight = 18.sp, maxLines = 1, softWrap = false
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        // Flexible bar cells fill the middle and shrink on a narrow screen, so the label +
+        // value are never pushed off / clipped (fixed-width cells used to overflow).
+        Row(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
             repeat(cells) { i ->
                 Box(
                     Modifier
-                        .size(width = 8.dp, height = 11.dp)
+                        .weight(1f)
+                        .height(11.dp)
                         .background(if (i < filled) color else off)
                 )
             }
         }
-        Text("  $value", color = color, fontSize = 12.sp, lineHeight = 18.sp, maxLines = 1)
+        Text("  $value", color = color, fontSize = 12.sp, lineHeight = 18.sp, maxLines = 1, softWrap = false)
     }
 }
 
