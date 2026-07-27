@@ -21,7 +21,7 @@ The guiding idea: **move the thinking to the phone** (which has compute, GPS, an
 
 > ⚠️ **Responsible use & no warranty.** PwnCompanion is a companion for authorized Wi-Fi security research and education, paired with a [Pwnagotchi](https://github.com/jayofelony/pwnagotchi). Capturing handshakes, sending deauthentication frames, and cracking passwords may be illegal without permission — only use it on networks you **own or have explicit authorization to test**. You are responsible for complying with your local laws. The software is provided **as-is, without warranty of any kind — use at your own risk** (see GPL-3.0 §15–16). Licensed under **GPL-3.0** (see [`LICENSE`](LICENSE)).
 
-> 🚀 New here? Start with **[GETTING_STARTED.md](GETTING_STARTED.md)** — it walks through both halves (the `bt-tether` + `pwn-companion.py` plugins on the Pi, and the app on your phone).
+> ⚙️ **Setup is required — the app does nothing on its own.** It only works paired with a [Pwnagotchi](https://github.com/jayofelony/pwnagotchi) running **both** the [`bt-tether`](https://github.com/wsvdmeer/pwnagotchi-plugins) and `pwn-companion.py` plugins, plus the plugin's Python dependency (`sudo apt install python3-websockets` — on Bookworm; `pip3` is blocked by PEP 668). **Follow [GETTING_STARTED.md](GETTING_STARTED.md) first** — it walks both halves (Pi plugins + deps, then the phone app) end to end. Skipping it means the app just sits on the standby screen with nothing to connect to.
 
 ## Screenshots
 
