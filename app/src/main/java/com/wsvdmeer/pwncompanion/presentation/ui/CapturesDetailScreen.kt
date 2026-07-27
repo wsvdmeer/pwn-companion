@@ -444,9 +444,10 @@ private fun CaptureDetailSheet(
                 val quick by CrackSettings.quickCrack.collectAsState()
                 val mangle by CrackSettings.mangle.collectAsState()
                 Spacer(Modifier.height(14.dp))
-                Text("search", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
+                Text("wordlist", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
                 Spacer(Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // quick: try only the top-N of the wordlist. mangle: expand each word into variants.
                     FilterChip("quick", quick, primary, dim) { CrackSettings.setQuickCrack(ctx, !quick) }
                     FilterChip("mangle", mangle, primary, dim) { CrackSettings.setMangle(ctx, !mangle) }
                 }
