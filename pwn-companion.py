@@ -979,6 +979,36 @@ class PwnCompanion(Plugin):
                     return ln
         return lines[0]
 
+    def _clear_captures(self):
+        """Delete every captured handshake (+ our sidecars) from the handshakes dir. Irreversible;
+        triggered by the app's 'wipe device handshakes' action. Only capture artifacts are touched
+        (.pcap grabs and the .gps.json / .22000 / .q sidecars we and hcxpcapngtool write).
+
+        Returns the number of files removed.
+        """
+        removed = 0
+        try:
+            directory = self.handshakes_dir
+            if not directory or not os.path.isdir(directory):
+                log.info(f"[pwn-companion] clear_captures: no handshakes dir at {directory}")
+                return 0
+            exts = (".pcap", ".gps.json", ".22000", ".22000.tmp", ".q")
+            for name in os.listdir(directory):
+                if name.endswith(exts):
+                    try:
+                        os.remove(os.path.join(directory, name))
+                        removed += 1
+                    except OSError as e:
+                        log.debug(f"[pwn-companion] clear_captures: couldn't remove {name}: {e}")
+            with self.lock:
+                self.handshake_count = 0
+                self._total_handshakes = 0
+                self._last_scan_file_count = 0
+            log.info(f"[pwn-companion] 🧹 cleared {removed} capture file(s) from {directory}")
+        except Exception as e:
+            log.error(f"[pwn-companion] clear_captures failed: {e}")
+        return removed
+
     def _scan_capture_history(self, limit=300):
         """Scan the handshakes dir and build a capture log for the app.
 
@@ -1964,6 +1994,19 @@ class PwnCompanion(Plugin):
         except Exception as e:
             log.error(f"[pwn-companion] Error dispatching command '{action}': {e}")
 
+        # After a wipe, push the now-empty history so the app's count matches disk immediately
+        # (don't wait for the next periodic scan).
+        if action == "clear_captures":
+            try:
+                loop = asyncio.get_event_loop()
+                captures = await loop.run_in_executor(None, self._scan_capture_history)
+                await self._send_to_app(
+                    {"type": "capture_history", "captures": captures,
+                     "total_files": getattr(self, "_last_scan_file_count", 0)}
+                )
+            except Exception as e:
+                log.error(f"[pwn-companion] post-clear history refresh failed: {e}")
+
     def execute_command(self, action: str, params: dict):
         """
         Execute a command received from the companion app.
@@ -2001,6 +2044,9 @@ class PwnCompanion(Plugin):
             elif action == "set_voice_pool":
                 # App-driven speech-bubble lines (JSON: {category: [line, ...]}).
                 self._apply_voice_pool(params.get("value"))
+            elif action == "clear_captures":
+                # Wipe captured handshakes from disk (app already cleared its own cache).
+                self._clear_captures()
             else:
                 log.warning(f"[pwn-companion] Unknown command action: {action}")
 

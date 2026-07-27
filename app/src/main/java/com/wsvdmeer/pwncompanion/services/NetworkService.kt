@@ -763,6 +763,17 @@ class NetworkService(private val context: Context) {
     fun getDeviceStates(): Map<String, DeviceState> = _deviceStates.value
 
     /**
+     * Drop the in-memory capture history from every device state (used by the app's "clear/wipe
+     * captures" actions). Without this a later deviceStates emit would re-merge the old captures
+     * straight back into the on-disk cache. A still-linked device repopulates on its next scan.
+     */
+    fun clearCaptures() {
+        _deviceStates.update { states ->
+            states.mapValues { (_, s) -> s.copy(captures = emptyList()) }
+        }
+    }
+
+    /**
      * Get message handler for UI subscription to incoming messages.
      */
     fun getMessageHandler(): MessageHandler = messageHandler

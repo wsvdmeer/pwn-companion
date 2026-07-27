@@ -426,7 +426,7 @@ On connect, the plugin also scans the handshake directory and sends a `capture_h
 | `capture_history` | Geolocated capture log + per-capture crackability (`quality`: eapol/pmkid/partial) + hashcat-`22000` hash (on-phone cracking) |
 | `cracked` | wpa-sec results (`bssid` → `password`), matched to captures in-app |
 
-App → device commands (`type: command`): `restart_auto` / `restart_manual` (mode), `set_channel_priority` (focus bettercap recon on the app's learned-best channels), `set_param` (clamped auto-tuning knobs), and `set_voice_pool` (fresh in-character e-ink lines).
+App → device commands (`type: command`): `restart_auto` / `restart_manual` (mode), `set_channel_priority` (focus bettercap recon on the app's learned-best channels), `set_param` (clamped auto-tuning knobs), `set_voice_pool` (fresh in-character e-ink lines), and `clear_captures` (delete the device's `.pcap` handshakes — the app's "wipe device handshakes" action).
 
 ---
 

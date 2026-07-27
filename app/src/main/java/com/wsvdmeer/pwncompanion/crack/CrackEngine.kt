@@ -30,7 +30,8 @@ import java.util.concurrent.atomic.AtomicReference
 sealed interface CrackState {
     data object Idle : CrackState
     data class Downloading(val pct: Float) : CrackState
-    data class Running(val bssid: String, val ssid: String, val tried: Long, val total: Long, val perSec: Long) : CrackState
+    // mode: what's being cracked + how, e.g. "eapol · native" / "pmkid · cpu" — shown in the banner.
+    data class Running(val bssid: String, val ssid: String, val tried: Long, val total: Long, val perSec: Long, val mode: String = "") : CrackState
     /** Held by a power policy (unplugged / low battery); resumes automatically when it clears. */
     data class Paused(val bssid: String, val ssid: String, val reason: String) : CrackState
     data class Done(val bssid: String, val ssid: String, val password: String) : CrackState
@@ -235,7 +236,9 @@ object CrackEngine {
             val w = words[(idx / mult).toInt()]
             return if (mangle) MangleRules.apply(w, (idx % mult).toInt()) else w
         }
-        _state.value = CrackState.Running(bssid, ssid, startIndex, limit, 0)
+        // Human-readable "what · how" for the progress banner (e.g. "eapol · native").
+        val mode = (if (pmkidH != null) "pmkid" else "eapol") + " · " + (if (useNative) "native" else "cpu")
+        _state.value = CrackState.Running(bssid, ssid, startIndex, limit, 0, mode)
         if (!quick && startIndex > 0) Log.i(TAG, "resuming $ssid from $startIndex/$limit")
         Log.i(TAG, "cracking $ssid: ${if (quick) "quick" else "full"}, $cores workers, " +
                 "${if (useNative) "native" else "kotlin"}, $limit candidates")
@@ -249,7 +252,7 @@ object CrackEngine {
                     val secs = (System.currentTimeMillis() - startMs) / 1000.0
                     val done = (n - startIndex).coerceAtLeast(0)
                     val ps = if (secs > 0.5) (done / secs).toLong() else 0L
-                    _state.value = CrackState.Running(bssid, ssid, n, limit, ps)
+                    _state.value = CrackState.Running(bssid, ssid, n, limit, ps, mode)
                     if (!quick) saveCheckpoint(context, key, wordlistId, (cursor.get() - inflight).coerceAtLeast(0))
                     delay(400)
                 }
