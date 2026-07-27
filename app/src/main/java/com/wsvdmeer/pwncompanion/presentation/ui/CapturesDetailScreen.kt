@@ -603,6 +603,8 @@ private fun CaptureDetailRow(
     onClick: () -> Unit,
     rowState: RowCrack = RowCrack.NONE,
 ) {
+    // Parse the hash once per row (not every recomposition) — it splits + hex-decodes twice.
+    val onPhoneCrackable = remember(c.hash22000) { WpaCracker.isOnPhoneCrackable(c.hash22000) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -669,7 +671,7 @@ private fun CaptureDetailRow(
             )
             // We have the handshake (PMKID or EAPOL) on the phone → crackable locally right now.
             // Tap the row to queue it. Bright + arrow to read as actionable.
-            WpaCracker.isOnPhoneCrackable(c.hash22000) -> Text(
+            onPhoneCrackable -> Text(
                 "crack ▸",
                 color = Color(0xFF3DFF6E), fontWeight = FontWeight.Bold, fontSize = 10.sp,
                 fontFamily = TerminalMono, modifier = Modifier.padding(end = 8.dp)

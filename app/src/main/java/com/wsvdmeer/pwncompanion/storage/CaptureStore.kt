@@ -24,6 +24,7 @@ import java.io.File
 object CaptureStore {
     private const val TAG = "CaptureStore"
     private const val FILE = "captures.json"
+    private const val MAX = 5000   // keep the newest N — bounds the file + per-merge work
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val lock = Any()
     @Volatile private var cache: LinkedHashMap<String, CaptureEntry>? = null
@@ -58,6 +59,12 @@ object CaptureStore {
         for (c in incoming) {
             val k = c.key
             if (m[k] != c) { m[k] = c; changed = true }
+        }
+        // Cap growth: if we're over the ceiling, keep only the newest MAX entries.
+        if (m.size > MAX) {
+            val keep = m.values.sortedByDescending { it.timestamp ?: 0L }.take(MAX)
+            m.clear(); keep.forEach { m[it.key] = it }
+            changed = true
         }
         if (changed) persist(context, m)
         m.values.sortedByDescending { it.timestamp ?: 0L }

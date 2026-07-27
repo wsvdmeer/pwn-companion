@@ -30,7 +30,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Full-screen detail views reachable from the console summaries (tap a section). */
 enum class DetailScreen { NONE, CAPTURES, LOG, LEARNING, STATS }
@@ -187,8 +189,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Restore persisted crack outcomes so cracked passwords + "no match" tags survive restart.
         CrackEngine.loadResults(getApplication())
         // Seed the capture list from the local cache so the app is usable before (or without) the
-        // Pi linking — the live device history merges on top once it connects.
-        _captures.value = CaptureStore.load(getApplication())
+        // Pi linking — the live device history merges on top once it connects. Loaded off the main
+        // thread; skip if a device already populated the list by the time it lands.
+        viewModelScope.launch {
+            val cached = withContext(Dispatchers.IO) { CaptureStore.load(getApplication()) }
+            if (_captures.value.isEmpty()) _captures.value = cached
+        }
     }
 
     /** Queue a capture for on-phone cracking (starts the engine if idle). */
@@ -649,7 +655,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // merged set (newest first). Persisting here is what lets captures — and their 22000
                 // hashes — survive a restart and stay crackable with the Pi disconnected.
                 val liveCaptures = states.values.flatMap { it.captures }
-                val allCaptures = CaptureStore.merge(getApplication(), liveCaptures)
+                // Merge + persist off the main thread — this collector runs on Main and fires on
+                // every device frame (the e-ink image rides along), so a synchronous file write here
+                // would jank the UI.
+                val allCaptures = withContext(Dispatchers.IO) {
+                    CaptureStore.merge(getApplication(), liveCaptures)
+                }
                 if (allCaptures.size > _captures.value.size) {
                     appendLog("[*] captures :: ${allCaptures.size} logged")
                 }
@@ -792,13 +803,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         appendLog("[>] forgot ${capture.ssid.ifBlank { capture.bssid }}")
     }
 
-    /** Delete a single capture's handshake on the Pwnagotchi (irreversible) and forget it locally. */
+    /** Delete a single capture's handshake on the Pwnagotchi (irreversible) and forget it locally.
+     *  Broadcasts to every linked node (the plugin matches by BSSID). If nothing's linked — or the
+     *  capture has no BSSID to match — it can only forget on the phone, and says so. */
     fun deleteDeviceCapture(capture: CaptureEntry) {
         forgetCapture(capture)
-        if (capture.bssid.isNotBlank()) sendCommand(
-            _deviceStates.value.keys.firstOrNull() ?: return, "delete_capture", capture.bssid
-        )
-        appendLog("[>] delete on device → ${capture.bssid}")
+        val devices = _deviceStates.value.keys
+        when {
+            capture.bssid.isBlank() ->
+                appendLog("[!] no BSSID — removed on phone only")
+            devices.isEmpty() ->
+                appendLog("[!] not linked — removed on phone; reconnect to delete on device")
+            else -> {
+                devices.forEach { sendCommand(it, "delete_capture", capture.bssid) }
+                appendLog("[>] delete on device → ${capture.bssid}")
+            }
+        }
     }
 
     /**
