@@ -293,7 +293,8 @@ fun LearningDetailScreen(viewModel: MainViewModel, paddingValues: PaddingValues,
                 ) {
                     Text(
                         "ch${ch.channel.toString().padEnd(3)} ",
-                        color = rowColor, fontSize = 12.sp, lineHeight = 18.sp, fontFamily = TerminalMono
+                        color = rowColor, fontSize = 12.sp, lineHeight = 18.sp, fontFamily = TerminalMono,
+                        maxLines = 1, softWrap = false
                     )
                     // Bars fill the width between the channel label and the count/yield.
                     Row(
@@ -311,7 +312,8 @@ fun LearningDetailScreen(viewModel: MainViewModel, paddingValues: PaddingValues,
                     }
                     Text(
                         "  ${ch.observationCount.toString().padStart(4)}  ${yieldPct}%",
-                        color = rowColor, fontSize = 12.sp, lineHeight = 18.sp, fontFamily = TerminalMono, maxLines = 1
+                        color = rowColor, fontSize = 12.sp, lineHeight = 18.sp, fontFamily = TerminalMono,
+                        maxLines = 1, softWrap = false
                     )
                 }
             }
