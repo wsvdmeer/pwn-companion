@@ -56,7 +56,8 @@ See the [plugin's README](https://github.com/wsvdmeer/pwnagotchi-plugins) for pa
 
 ```bash
 # On the Pi:
-sudo pip3 install websockets                 # required
+sudo apt install -y python3-websockets       # required (apt pkg — Bookworm blocks system-wide pip)
+# older images / venv setup instead: sudo pip3 install websockets
 sudo apt install -y hcxtools                 # for handshake crackability grading (usually preinstalled)
 
 sudo cp pwn-companion.py /usr/local/share/pwnagotchi/custom-plugins/
