@@ -1009,6 +1009,41 @@ class PwnCompanion(Plugin):
             log.error(f"[pwn-companion] clear_captures failed: {e}")
         return removed
 
+    def _delete_capture(self, bssid):
+        """Delete a single capture's handshake files (matched by BSSID) from the handshakes dir.
+        Irreversible; triggered by the app's per-capture 'delete on device'. Returns files removed."""
+        if not bssid:
+            return 0
+        target = str(bssid).strip().lower().replace(":", "")
+        if not target:
+            return 0
+        removed = 0
+        try:
+            directory = self.handshakes_dir
+            if not directory or not os.path.isdir(directory):
+                return 0
+            exts = (".pcap", ".gps.json", ".22000", ".22000.tmp", ".q")
+            for name in os.listdir(directory):
+                if not name.endswith(exts):
+                    continue
+                base = name
+                for e in exts:
+                    if base.endswith(e):
+                        base = base[:-len(e)]
+                        break
+                # pwnagotchi names files <ssid>_<bssid>.<ext>; the BSSID is the last chunk.
+                fbssid = base.rsplit("_", 1)[-1].lower().replace(":", "") if "_" in base else base.lower()
+                if fbssid == target:
+                    try:
+                        os.remove(os.path.join(directory, name))
+                        removed += 1
+                    except OSError as e:
+                        log.debug(f"[pwn-companion] delete_capture: couldn't remove {name}: {e}")
+            log.info(f"[pwn-companion] 🗑️ deleted {removed} file(s) for bssid {target}")
+        except Exception as e:
+            log.error(f"[pwn-companion] delete_capture failed: {e}")
+        return removed
+
     def _scan_capture_history(self, limit=300):
         """Scan the handshakes dir and build a capture log for the app.
 
@@ -2047,6 +2082,9 @@ class PwnCompanion(Plugin):
             elif action == "clear_captures":
                 # Wipe captured handshakes from disk (app already cleared its own cache).
                 self._clear_captures()
+            elif action == "delete_capture":
+                # Delete one capture's handshake files, matched by BSSID (in params "value").
+                self._delete_capture(params.get("value"))
             else:
                 log.warning(f"[pwn-companion] Unknown command action: {action}")
 

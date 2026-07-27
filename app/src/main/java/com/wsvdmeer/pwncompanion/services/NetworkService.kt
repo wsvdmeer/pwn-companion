@@ -773,6 +773,17 @@ class NetworkService(private val context: Context) {
         }
     }
 
+    /** Drop one capture (matched by BSSID, case-insensitive) from every device state. */
+    fun removeCapture(bssid: String) {
+        val b = bssid.trim().lowercase()
+        if (b.isEmpty()) return
+        _deviceStates.update { states ->
+            states.mapValues { (_, s) ->
+                s.copy(captures = s.captures.filterNot { it.bssid.trim().lowercase() == b })
+            }
+        }
+    }
+
     /**
      * Get message handler for UI subscription to incoming messages.
      */
