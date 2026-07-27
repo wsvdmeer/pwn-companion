@@ -78,7 +78,7 @@ object CrackEngine {
     /** Queue [capture] for cracking (dedup vs cracked/running/queued); start the processor if idle. */
     fun enqueue(context: Context, capture: CaptureEntry) {
         val hash = capture.hash22000 ?: return
-        if (!WpaCracker.isCrackablePmkid(hash)) return
+        if (!WpaCracker.isOnPhoneCrackable(hash)) return
         loadResults(context.applicationContext)
         val key = norm(capture.bssid)
         if (_cracked.value.containsKey(key)) return          // already cracked
@@ -186,8 +186,26 @@ object CrackEngine {
         val ssid = capture.ssid.ifBlank { capture.bssid.ifBlank { "network" } }
         val bssid = capture.bssid
         val key = norm(bssid)
-        val h = WpaCracker.parsePmkid(capture.hash22000 ?: "")
-        if (h == null) { _state.value = CrackState.Failed(bssid, ssid, "bad hash"); return true }
+        // The capture is either a PMKID (WPA*01) or an EAPOL handshake (WPA*02). Parse whichever it
+        // is; both share the wordlist loop below, differing only in how a candidate is verified.
+        val line = capture.hash22000 ?: ""
+        val pmkidH = WpaCracker.parsePmkid(line)
+        val eapolH = if (pmkidH == null) WpaCracker.parseEapol(line) else null
+        if (pmkidH == null && eapolH == null) {
+            _state.value = CrackState.Failed(bssid, ssid, "bad hash"); return true
+        }
+        // Per-flavour verify + native-batch closures (chosen once, reused by every worker).
+        val verifyOne: (String) -> Boolean =
+            if (pmkidH != null) { c -> WpaCracker.verify(pmkidH, c) }
+            else { c -> WpaCracker.verifyEapol(eapolH!!, c) }
+        val nativeBatch: (Array<String>) -> Int =
+            if (pmkidH != null) { arr ->
+                NativeWpaCracker.crackBatch(pmkidH.essid, pmkidH.macAp, pmkidH.macSta, pmkidH.pmkid, 4096, arr)
+            } else { arr ->
+                eapolH!!.let {
+                    NativeWpaCracker.crackBatchEapol(it.essid, it.macAp, it.macSta, it.mic, it.anonce, it.eapol, 4096, arr)
+                }
+            }
         val words = WordlistManager.words()
         val cores = workerCores(context)
         val quick = CrackSettings.quickCrack.value
@@ -208,7 +226,8 @@ object CrackEngine {
         val tried = AtomicLong(startIndex)
         val found = AtomicReference<String?>(null)
         val startMs = System.currentTimeMillis()
-        val useNative = NativeWpaCracker.available && NativeWpaCracker.verified
+        val useNative = NativeWpaCracker.available &&
+            (if (pmkidH != null) NativeWpaCracker.verified else NativeWpaCracker.eapolVerified)
         val inflight = BATCH.toLong() * cores
         // Map a flat candidate index to its passphrase: word = idx / mult, rule = idx % mult.
         // With mangle off, mult == 1 so this is just words[idx] — no per-candidate allocation cost.
@@ -254,7 +273,7 @@ object CrackEngine {
                             tried.addAndGet(end - start)
                             if (batch.isNotEmpty()) {
                                 val arr = batch.toTypedArray()
-                                val hit = NativeWpaCracker.crackBatch(h.essid, h.macAp, h.macSta, h.pmkid, 4096, arr)
+                                val hit = nativeBatch(arr)
                                 if (hit >= 0) { found.set(arr[hit]); return@launch }
                             }
                         } else {
@@ -262,7 +281,7 @@ object CrackEngine {
                             while (i < end) {
                                 if (found.get() != null || skip.get() || paused.get() || !isActive) return@launch
                                 val cand = candidateAt(i)
-                                if (cand.length in 8..63 && WpaCracker.verify(h, cand)) { found.set(cand); return@launch }
+                                if (cand.length in 8..63 && verifyOne(cand)) { found.set(cand); return@launch }
                                 tried.incrementAndGet()
                                 i++
                             }

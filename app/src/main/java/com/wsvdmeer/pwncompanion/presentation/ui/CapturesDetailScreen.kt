@@ -320,7 +320,7 @@ fun CapturesDetailScreen(
         }
         CaptureDetailSheet(
             capture = cap,
-            onPhoneCrackable = WpaCracker.isCrackablePmkid(cap.hash22000),
+            onPhoneCrackable = WpaCracker.isOnPhoneCrackable(cap.hash22000),
             isRunning = running,
             isQueued = crackQueue.any { CrackEngine.norm(it.bssid) == k },
             isExhausted = k in crackExhausted,
@@ -375,7 +375,7 @@ private fun CaptureDetailSheet(
                 isQueued -> "queued"
                 isExhausted -> "no match (wordlist searched)"
                 onPhoneCrackable -> "ready to crack on-phone"
-                capture.isCrackable -> "crackable — no on-phone PMKID hash yet"
+                capture.isCrackable -> "crackable — no on-phone hash yet"
                 capture.isPartial -> "partial — can't crack"
                 else -> "—"
             }
@@ -558,16 +558,16 @@ private fun CaptureDetailRow(
                 color = Color(0xFFFFA533), fontSize = 10.sp,
                 fontFamily = TerminalMono, modifier = Modifier.padding(end = 8.dp)
             )
-            // We have the PMKID hash on the phone → crackable locally right now. Tap the row to
-            // queue it. Bright + arrow to read as actionable.
-            WpaCracker.isCrackablePmkid(c.hash22000) -> Text(
+            // We have the handshake (PMKID or EAPOL) on the phone → crackable locally right now.
+            // Tap the row to queue it. Bright + arrow to read as actionable.
+            WpaCracker.isOnPhoneCrackable(c.hash22000) -> Text(
                 "crack ▸",
                 color = Color(0xFF3DFF6E), fontWeight = FontWeight.Bold, fontSize = 10.sp,
                 fontFamily = TerminalMono, modifier = Modifier.padding(end = 8.dp)
             )
             c.isCrackable -> Text(
-                // Crackable per quality, but no on-phone PMKID hash yet (EAPOL is Phase 3, or
-                // the hash hasn't arrived) — dimmer, not yet actionable.
+                // Crackable per quality, but the on-phone hash hasn't arrived yet — dimmer, not
+                // yet actionable.
                 if (c.quality == "pmkid") "pmkid" else "eapol",
                 color = Color(0xFF3DFF6E).copy(alpha = 0.6f), fontSize = 10.sp, fontFamily = TerminalMono,
                 modifier = Modifier.padding(end = 8.dp)

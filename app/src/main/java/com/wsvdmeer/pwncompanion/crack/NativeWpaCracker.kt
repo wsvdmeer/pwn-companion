@@ -29,9 +29,29 @@ object NativeWpaCracker {
         batch: Array<String>,
     ): Int
 
-    // Reference vector (matches WpaCrackerTest): passphrase "12345678".
+    /** Index of the first candidate in [batch] whose EAPOL MIC matches, or -1 if none. */
+    external fun crackBatchEapol(
+        essid: ByteArray,
+        apMac: ByteArray,
+        staMac: ByteArray,
+        mic: ByteArray,
+        anonce: ByteArray,
+        eapol: ByteArray,
+        iterations: Int,
+        batch: Array<String>,
+    ): Int
+
+    // Reference vectors (match WpaCrackerTest). PMKID key "12345678"; EAPOL key "hashcat!"
+    // (the official hashcat mode-22000 example handshake).
     private const val REF_LINE =
         "WPA*01*72ba558ee61938a6061902e2fa1fb8b3*fc690c158264*f4747f87f9f4*70776e2d746573742d6e6574***"
+    private const val REF_EAPOL =
+        "WPA*02*024022795224bffca545276c3762686f*6466b38ec3fc*225edc49b7aa" +
+        "*54502d4c494e4b5f484153484341545f54455354" +
+        "*10e3be3b005a629e89de088d6a2fdc489db83ad4764f2d186b9cde15446e972e" +
+        "*0103007502010a0000000000000000000148ce2ccba9c1fda130ff2fbbfb4fd3b063d1a93920b0f7df54a5cbf787b16171" +
+        "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+        "001630140100000fac040100000fac040100000fac028000*a2"
 
     /** Does native find the known key for the reference PMKID? Guards against a broken .so. */
     fun selfCheck(): Boolean {
@@ -43,10 +63,21 @@ object NativeWpaCracker {
         }.getOrDefault(false)
     }
 
+    /** Does native find the known key for the reference EAPOL handshake? Guards the EAPOL path. */
+    fun selfCheckEapol(): Boolean {
+        if (!available) return false
+        val h = WpaCracker.parseEapol(REF_EAPOL) ?: return false
+        return runCatching {
+            crackBatchEapol(h.essid, h.macAp, h.macSta, h.mic, h.anonce, h.eapol, 4096,
+                arrayOf("password", "hashcat", "hashcat!", "qwertyui")) == 2
+        }.getOrDefault(false)
+    }
+
     /**
-     * Cached [selfCheck] — the crack loop only uses native when this is true, so a broken/wrong
-     * `.so` (or one built for the wrong ABI variant) can never return wrong results; it falls back
-     * to the pure-Kotlin cracker instead.
+     * Cached self-checks — the crack loop only uses a native path when its check is true, so a
+     * broken/wrong `.so` (or one built for the wrong ABI variant) can never return wrong results; it
+     * falls back to the pure-Kotlin cracker instead. PMKID and EAPOL are gated independently.
      */
     val verified: Boolean by lazy { selfCheck() }
+    val eapolVerified: Boolean by lazy { selfCheckEapol() }
 }
