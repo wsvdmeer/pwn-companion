@@ -1,0 +1,91 @@
+name: CI
+
+# Build + test on every push/PR. On a version tag (v*), also build the APK and
+# attach it to the GitHub Release — so the released APK is always reproducible
+# and never goes stale.
+#
+# For a SIGNED release APK on tags, add these repository secrets (Settings →
+# Secrets and variables → Actions):
+#   KEYSTORE_BASE64   - `base64 -w0 release.jks` (the release keystore)
+#   KEYSTORE_PASSWORD - store password
+#   KEY_ALIAS         - key alias (e.g. pwncompanion)
+#   KEY_PASSWORD      - key password
+# Without them, tags still build + attach an (unsigned/debug) APK.
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: write   # needed to attach assets to a Release on tag
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK + CMake (native cracker)
+        run: sdkmanager "cmake;3.22.1" "ndk;27.0.12077973"
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('**/*.gradle*', 'gradle/wrapper/gradle-wrapper.properties', 'gradle/libs.versions.toml') }}
+
+      - name: Unit tests
+        run: ./gradlew testDebugUnitTest
+
+      - name: Configure release signing (if secrets present)
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > release.jks
+            {
+              echo "storeFile=release.jks"
+              echo "storePassword=${{ secrets.KEYSTORE_PASSWORD }}"
+              echo "keyAlias=${{ secrets.KEY_ALIAS }}"
+              echo "keyPassword=${{ secrets.KEY_PASSWORD }}"
+            } > keystore.properties
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build APK
+        run: |
+          if [ "${{ steps.signing.outputs.signed }}" = "true" ]; then
+            ./gradlew assembleRelease
+            echo "APK=$(ls app/build/outputs/apk/release/*.apk | head -1)" >> "$GITHUB_ENV"
+          else
+            ./gradlew assembleDebug
+            echo "APK=$(ls app/build/outputs/apk/debug/*.apk | head -1)" >> "$GITHUB_ENV"
+          fi
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pwncompanion-apk
+          path: ${{ env.APK }}
+
+      - name: Attach APK to Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.APK }}
