@@ -120,8 +120,10 @@ The app opens **straight to the console** — the voice is on-device and determi
 Requires a **Pwnagotchi** (the [jayofelony](https://github.com/jayofelony/pwnagotchi) fork) with the **[`bt-tether` plugin](https://github.com/wsvdmeer/pwnagotchi-plugins)** configured — that's the transport: your phone shares internet to the Pi *and* the app link rides the same Bluetooth PAN. (`bt-tether` is a reworked plugin — with a web UI for managing the phone link — from [wsvdmeer/pwnagotchi-plugins](https://github.com/wsvdmeer/pwnagotchi-plugins).)
 
 ```bash
-# Python dependency
-sudo pip3 install websockets
+# Python dependency. On recent Raspberry Pi OS (Bookworm+) the system Python is
+# PEP-668 "externally managed", so `pip3 install` is blocked — use the apt package:
+sudo apt install -y python3-websockets
+# (older images / a venv-based setup instead: sudo pip3 install websockets)
 
 # Handshake crackability grading uses hcxpcapngtool (ships on jayofelony images;
 # install if missing):
