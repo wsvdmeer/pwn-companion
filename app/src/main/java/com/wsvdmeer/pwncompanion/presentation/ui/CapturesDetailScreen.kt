@@ -767,6 +767,10 @@ private fun CrackBanner(
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     val error = MaterialTheme.colorScheme.error
     val green = Color(0xFF3DFF6E)
+    // Live power policy, shown alongside the run's locked options so you can see everything in effect.
+    val gentleCpu by CrackSettings.gentleCpu.collectAsState()
+    val chargerOnly by CrackSettings.chargerOnly.collectAsState()
+    val lowBatteryStop by CrackSettings.lowBatteryStop.collectAsState()
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -808,11 +812,25 @@ private fun CrackBanner(
                     )
                 }
                 Spacer(Modifier.height(4.dp))
-                // Lead with the handshake type + engine ("eapol · native") so it's clear what's
-                // being cracked and whether the fast native path is in use.
-                val modePrefix = if (state.mode.isNotEmpty()) "${state.mode} · " else ""
+                // Options in effect: the run's locked type/engine/search (state.mode) plus the live
+                // power policy. One scrollable line so it never wraps.
+                val powerOpts = buildList {
+                    if (gentleCpu) add("easy cpu")
+                    if (chargerOnly) add("charger")
+                    if (lowBatteryStop) add("stop<15%")
+                }
+                val optsLine = (listOf(state.mode).filter { it.isNotEmpty() } + powerOpts).joinToString(" · ")
+                if (optsLine.isNotEmpty()) {
+                    Text(
+                        optsLine,
+                        color = primary.copy(alpha = 0.7f), fontSize = 10.sp, fontFamily = TerminalMono,
+                        maxLines = 1, softWrap = false,
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                    )
+                    Spacer(Modifier.height(2.dp))
+                }
                 Text(
-                    "$modePrefix${state.tried} / ${state.total} (${(frac * 100).roundToInt()}%) · ${state.perSec}/s · eta $eta",
+                    "${state.tried} / ${state.total} (${(frac * 100).roundToInt()}%) · ${state.perSec}/s · eta $eta",
                     color = dim, fontSize = 11.sp, fontFamily = TerminalMono
                 )
                 Spacer(Modifier.height(5.dp))
