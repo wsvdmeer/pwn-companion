@@ -455,16 +455,23 @@ class NetworkService(private val context: Context) {
 
     private fun onClientConnected(deviceId: String, deviceName: String, clientIp: String) {
         scope.launch {
-            val state = DeviceState(
-                deviceId = deviceId,
-                deviceName = deviceName,
-                ipAddress = clientIp,  // Use the actual Pwnagotchi's IP
-                port = 8081,
-                interfaceName = "bnep0",
-                isConnected = true,
-                connectionState = DeviceState.ConnectionState.CONNECTED
-            )
-            _deviceStates.update { it.toMutableMap().apply { put(deviceId, state) } }
+            // Merge onto any state a message already created (capture_history can land before this
+            // registration coroutine runs) so we set the connection fields without wiping captures.
+            _deviceStates.update { states ->
+                val base = states[deviceId] ?: DeviceState(
+                    deviceId = deviceId, deviceName = deviceName,
+                    ipAddress = clientIp, interfaceName = "bnep0",
+                )
+                val state = base.copy(
+                    deviceName = deviceName,
+                    ipAddress = clientIp,  // Use the actual Pwnagotchi's IP
+                    port = 8081,
+                    interfaceName = "bnep0",
+                    isConnected = true,
+                    connectionState = DeviceState.ConnectionState.CONNECTED,
+                )
+                states.toMutableMap().apply { put(deviceId, state) }
+            }
             _connectedDeviceCount.value = webSocketServer.getConnectedClientCount()
 
             // Refresh notification with updated device count
@@ -583,7 +590,17 @@ class NetworkService(private val context: Context) {
             // The lambda is pure (copy/mergeCaptures have no side effects), so it's safe
             // to re-run on CAS retry.
             _deviceStates.update { states ->
-                val currentState = states[deviceId] ?: return@update states
+                // Don't drop data that arrives before onClientConnected has registered the device
+                // (the plugin fires capture_history immediately on connect — it used to race the
+                // async registration and get discarded, so captures only showed after a reconnect).
+                val currentState = states[deviceId] ?: DeviceState(
+                    deviceId = deviceId,
+                    deviceName = data.deviceName ?: "pwnagotchi",
+                    ipAddress = "",
+                    interfaceName = "bnep0",
+                    isConnected = true,
+                    connectionState = DeviceState.ConnectionState.CONNECTED,
+                )
                 val updatedState = currentState.copy(
                     deviceName = data.deviceName ?: currentState.deviceName,
                     // Capture the Pwnagotchi's own name from plugin status messages
