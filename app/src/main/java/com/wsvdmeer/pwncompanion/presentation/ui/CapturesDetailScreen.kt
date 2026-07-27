@@ -102,6 +102,7 @@ fun CapturesDetailScreen(
     var crackedOnly by remember { mutableStateOf(false) }
     var crackableOnly by remember { mutableStateOf(false) }
     var showFilters by remember { mutableStateOf(false) }
+    var showOptions by remember { mutableStateOf(false) }
     var showManage by remember { mutableStateOf(false) }
     var detailCapture by remember { mutableStateOf<CaptureEntry?>(null) }
 
@@ -259,7 +260,7 @@ fun CapturesDetailScreen(
                         SearchField(query, onQuery = { query = it }, primary = primary, dim = dim)
                     }
                     Text(
-                        if (activeFilters > 0) "[ options · $activeFilters ]" else "[ options ]",
+                        if (activeFilters > 0) "[ filters · $activeFilters ]" else "[ filters ]",
                         color = if (activeFilters > 0) primary else dim,
                         fontSize = 12.sp, fontFamily = TerminalMono,
                         modifier = Modifier
@@ -267,6 +268,17 @@ fun CapturesDetailScreen(
                             .clickable { showFilters = true }
                             .padding(horizontal = 10.dp, vertical = 6.dp)
                     )
+                    // Cracking power options — only relevant when there's something crackable.
+                    if (crackable > 0) {
+                        Text(
+                            "[ options ]",
+                            color = dim, fontSize = 12.sp, fontFamily = TerminalMono,
+                            modifier = Modifier
+                                .border(1.dp, MaterialTheme.colorScheme.outline)
+                                .clickable { showOptions = true }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        )
+                    }
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(
@@ -316,12 +328,17 @@ fun CapturesDetailScreen(
             onGeo = { geoOnly = !geoOnly },
             onCrackable = { crackableOnly = !crackableOnly },
             onCracked = { crackedOnly = !crackedOnly },
-            showPower = crackable > 0,
+            onDismiss = { showFilters = false },
+        )
+    }
+
+    if (showOptions) {
+        CrackPowerSheet(
             gentleCpu = gentleCpu, chargerOnly = chargerOnly, lowBatteryStop = lowBatteryStop,
             onGentle = { CrackSettings.setGentleCpu(context, !gentleCpu) },
             onCharger = { CrackSettings.setChargerOnly(context, !chargerOnly) },
             onLowBatt = { CrackSettings.setLowBatteryStop(context, !lowBatteryStop) },
-            onDismiss = { showFilters = false },
+            onDismiss = { showOptions = false },
         )
     }
 
@@ -552,13 +569,48 @@ private fun captureWhen(ts: Long?): String {
     return "${relativeAgeLocal(ts)} ago · $date"
 }
 
-/** Bottom sheet holding the capture filters + cracking-power knobs (keeps the screen uncluttered). */
+/** Bottom sheet: which captures to show (pure display filters). */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FiltersSheet(
     geo: Boolean, crackableF: Boolean, cracked: Boolean,
     onGeo: () -> Unit, onCrackable: () -> Unit, onCracked: () -> Unit,
-    showPower: Boolean,
+    onDismiss: () -> Unit,
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF02060A),
+        contentColor = primary,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 28.dp)
+        ) {
+            Text("[ FILTERS ]", color = primary, fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = TerminalMono)
+            Spacer(Modifier.height(4.dp))
+            Text("show only captures matching…", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterChip("geo", geo, primary, dim, onGeo)
+                FilterChip("crackable", crackableF, primary, dim, onCrackable)
+                FilterChip("cracked", cracked, primary, dim, onCracked)
+            }
+        }
+    }
+}
+
+/** Bottom sheet: ongoing cracking-power policy (applies to whatever's cracking). The per-crack
+ *  search choices — quick / mangle — live on each capture's crack sheet, not here. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CrackPowerSheet(
     gentleCpu: Boolean, chargerOnly: Boolean, lowBatteryStop: Boolean,
     onGentle: () -> Unit, onCharger: () -> Unit, onLowBatt: () -> Unit,
     onDismiss: () -> Unit,
@@ -577,31 +629,16 @@ private fun FiltersSheet(
                 .padding(bottom = 28.dp)
         ) {
             Text("[ OPTIONS ]", color = primary, fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = TerminalMono)
-            Spacer(Modifier.height(12.dp))
-            Text("filter", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(4.dp))
+            Text("cracking power — keeps the phone cool/charged", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
+            Spacer(Modifier.height(10.dp))
             Row(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                FilterChip("geo", geo, primary, dim, onGeo)
-                FilterChip("crackable", crackableF, primary, dim, onCrackable)
-                FilterChip("cracked", cracked, primary, dim, onCracked)
-            }
-            if (showPower) {
-                Spacer(Modifier.height(16.dp))
-                // Ongoing power policy (applies to whatever's cracking). The per-crack search
-                // choices (quick / mangle) live on each capture's crack sheet instead.
-                Text("cracking power", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
-                Spacer(Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FilterChip("easy cpu", gentleCpu, primary, dim, onGentle)
-                    FilterChip("charger only", chargerOnly, primary, dim, onCharger)
-                    FilterChip("stop <15%", lowBatteryStop, primary, dim, onLowBatt)
-                }
+                FilterChip("easy cpu", gentleCpu, primary, dim, onGentle)
+                FilterChip("charger only", chargerOnly, primary, dim, onCharger)
+                FilterChip("stop <15%", lowBatteryStop, primary, dim, onLowBatt)
             }
         }
     }
