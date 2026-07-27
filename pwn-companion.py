@@ -820,40 +820,46 @@ class PwnCompanion(Plugin):
                     self.loop
                 )
 
-            # Save GPS data alongside the pcap
-            if not self.last_gps:
-                return
+            # Do we have a real GPS fix right now? (Used to decide whether to write the
+            # .gps.json sidecar and whether to attach coords to the live push.)
+            has_gps = False
+            lat = lon = 0
+            if self.last_gps:
+                lat = self.last_gps.get("latitude", 0)
+                lon = self.last_gps.get("longitude", 0)
+                has_gps = not (lat == 0 and lon == 0)
 
-            lat = self.last_gps.get("latitude", 0)
-            lon = self.last_gps.get("longitude", 0)
-            if lat == 0 and lon == 0:
-                log.debug("[pwn-companion] Skipping GPS save - no valid coordinates")
-                return
+            # Save GPS data alongside the pcap — only when there's a valid fix.
+            if has_gps:
+                # Only rewrite the extension, not every ".pcap" substring in the path
+                # (a dir/SSID containing ".pcap" would otherwise get a misnamed sidecar
+                # that _scan_capture_history — which strips only the suffix — can't pair).
+                gps_filename = (
+                    filename[:-len(".pcap")] + ".gps.json"
+                    if filename.endswith(".pcap")
+                    else filename + ".gps.json"
+                )
+                gps_data = {
+                    "latitude": self.last_gps.get("latitude"),
+                    "longitude": self.last_gps.get("longitude"),
+                    "accuracy": self.last_gps.get("accuracy"),
+                    "altitude": self.last_gps.get("altitude"),
+                    "timestamp": self.last_gps.get("timestamp"),
+                }
+                try:
+                    with open(gps_filename, "w") as fp:
+                        json.dump(gps_data, fp, indent=2)
+                    log.info(
+                        f"[pwn-companion] ✓ GPS saved to {gps_filename} "
+                        f"(lat: {lat:.{GPS_COORD_PRECISION}f}, lon: {lon:.{GPS_COORD_PRECISION}f})"
+                    )
+                except OSError as e:
+                    log.warning(f"[pwn-companion] couldn't write GPS sidecar: {e}")
 
-            # Only rewrite the extension, not every ".pcap" substring in the path
-            # (a dir/SSID containing ".pcap" would otherwise get a misnamed sidecar
-            # that _scan_capture_history — which strips only the suffix — can't pair).
-            gps_filename = (
-                filename[:-len(".pcap")] + ".gps.json"
-                if filename.endswith(".pcap")
-                else filename + ".gps.json"
-            )
-            gps_data = {
-                "latitude": self.last_gps.get("latitude"),
-                "longitude": self.last_gps.get("longitude"),
-                "accuracy": self.last_gps.get("accuracy"),
-                "altitude": self.last_gps.get("altitude"),
-                "timestamp": self.last_gps.get("timestamp"),
-            }
-            with open(gps_filename, "w") as fp:
-                json.dump(gps_data, fp, indent=2)
-            log.info(
-                f"[pwn-companion] ✓ GPS saved to {gps_filename} "
-                f"(lat: {lat:.{GPS_COORD_PRECISION}f}, lon: {lon:.{GPS_COORD_PRECISION}f})"
-            )
-
-            # Push this single geolocated capture to the app so its list grows live
-            # (no need to wait for a reconnect to re-scan the whole dir).
+            # Push this single capture to the app so its list grows live — with map coords
+            # when we have a fix, without them otherwise. Runs regardless of GPS so a capture
+            # taken during a GPS dropout still appears immediately (it just isn't mapped until
+            # a later re-scan pairs a fix). No need to wait for a reconnect to re-scan the dir.
             if self.app_connected:
                 base = os.path.basename(filename)
                 if base.endswith(".pcap"):
@@ -862,11 +868,12 @@ class PwnCompanion(Plugin):
                 entry = {
                     "ssid": cap_ssid or "unknown",
                     "bssid": cap_bssid,
-                    "latitude": self.last_gps.get("latitude"),
-                    "longitude": self.last_gps.get("longitude"),
-                    "accuracy": self.last_gps.get("accuracy"),
-                    "timestamp": self.last_gps.get("timestamp") or int(time.time()),
+                    "timestamp": (self.last_gps.get("timestamp") if has_gps else None) or int(time.time()),
                 }
+                if has_gps:
+                    entry["latitude"] = self.last_gps.get("latitude")
+                    entry["longitude"] = self.last_gps.get("longitude")
+                    entry["accuracy"] = self.last_gps.get("accuracy")
                 # Fresh capture: recompute crackability (bettercap may have just
                 # appended the frames that complete/upgrade it) and refresh the cache.
                 q = self._classify_pcap(filename, use_cache=False)
