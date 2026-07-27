@@ -26,6 +26,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -148,7 +149,8 @@ fun CapturesDetailScreen(
         Spacer(Modifier.height(8.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 "[ BACK ]",
@@ -156,22 +158,29 @@ fun CapturesDetailScreen(
                 fontWeight = FontWeight.Bold,
                 fontSize = 15.sp,
                 fontFamily = TerminalMono,
+                maxLines = 1, softWrap = false,
                 modifier = Modifier.clickable { onBack() }
             )
-            Text("[ CAPTURES ]", color = primary, fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = TerminalMono)
+            Text(
+                "[ CAPTURES ]", color = primary, fontWeight = FontWeight.Bold, fontSize = 15.sp,
+                fontFamily = TerminalMono, maxLines = 1, softWrap = false,
+            )
+            // Right-aligned action group (kept on one line so it never wraps on narrow screens).
+            Spacer(Modifier.weight(1f))
             // Debug-only: inject a known-crackable capture to test the crack flow. Stripped in release.
             if (BuildConfig.DEBUG) {
                 Text(
                     "[ +test ]",
                     color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontFamily = TerminalMono,
+                    maxLines = 1, softWrap = false,
                     modifier = Modifier.clickable { viewModel.injectTestCapture() }
                 )
             }
-            Spacer(Modifier.weight(1f))
             // Clear/wipe captures (phone cache, or the Pi's handshakes too).
             Text(
                 "[ clear ]",
                 color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontFamily = TerminalMono,
+                maxLines = 1, softWrap = false,
                 modifier = Modifier.clickable { showManage = true }
             )
         }
