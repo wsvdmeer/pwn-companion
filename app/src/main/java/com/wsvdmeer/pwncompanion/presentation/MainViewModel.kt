@@ -180,6 +180,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val crackQueue: StateFlow<List<CaptureEntry>> = CrackEngine.queue
     // Networks fully searched on-phone with no hit — shown as a lasting "no match" status.
     val crackExhausted: StateFlow<Set<String>> = CrackEngine.exhausted
+    // Networks started but not finished (stopped/interrupted, no hit yet) — shown as "tried".
+    val crackAttempted: StateFlow<Set<String>> = CrackEngine.attempted
 
     init {
         // Restore persisted crack outcomes so cracked passwords + "no match" tags survive restart.
@@ -779,6 +781,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _captures.value = emptyList()
         sendPwnagotchiCommand("clear_captures")
         appendLog("[>] wipe device handshakes → sent")
+    }
+
+    /** Remove a single capture from the phone (local cache + in-memory). A linked Pi resends it on
+     *  its next scan; use [deleteDeviceCapture] to also delete the .pcap on the device. */
+    fun forgetCapture(capture: CaptureEntry) {
+        CaptureStore.remove(getApplication(), capture.key)
+        networkService?.removeCapture(capture.bssid)
+        _captures.value = _captures.value.filterNot { it.key == capture.key }
+        appendLog("[>] forgot ${capture.ssid.ifBlank { capture.bssid }}")
+    }
+
+    /** Delete a single capture's handshake on the Pwnagotchi (irreversible) and forget it locally. */
+    fun deleteDeviceCapture(capture: CaptureEntry) {
+        forgetCapture(capture)
+        if (capture.bssid.isNotBlank()) sendCommand(
+            _deviceStates.value.keys.firstOrNull() ?: return, "delete_capture", capture.bssid
+        )
+        appendLog("[>] delete on device → ${capture.bssid}")
     }
 
     /**

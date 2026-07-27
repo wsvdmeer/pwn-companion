@@ -70,6 +70,13 @@ object CaptureStore {
         Log.i(TAG, "capture cache cleared")
     }
 
+    /** Drop a single capture (by [CaptureEntry.key]) from the cache and persist. */
+    fun remove(context: Context, key: String): List<CaptureEntry> = synchronized(lock) {
+        val m = ensure(context)
+        if (m.remove(key) != null) persist(context, m)
+        m.values.sortedByDescending { it.timestamp ?: 0L }
+    }
+
     private fun persist(context: Context, m: Map<String, CaptureEntry>) {
         runCatching { file(context).writeText(json.encodeToString<List<CaptureEntry>>(m.values.toList())) }
             .onFailure { Log.w(TAG, "persist failed: ${it.message}") }

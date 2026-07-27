@@ -95,6 +95,7 @@ fun CapturesDetailScreen(
     val crackState by viewModel.crackState.collectAsState()
     val crackQueue by viewModel.crackQueue.collectAsState()
     val crackExhausted by viewModel.crackExhausted.collectAsState()
+    val crackAttempted by viewModel.crackAttempted.collectAsState()
     var query by remember { mutableStateOf("") }
     var geoOnly by remember { mutableStateOf(false) }
     var crackedOnly by remember { mutableStateOf(false) }
@@ -293,6 +294,7 @@ fun CapturesDetailScreen(
                     currentKey == k -> if (currentPaused) RowCrack.PAUSED else RowCrack.RUNNING
                     k in queuedKeys -> RowCrack.QUEUED
                     k in crackExhausted -> RowCrack.EXHAUSTED
+                    k in crackAttempted -> RowCrack.ATTEMPTED
                     else -> RowCrack.NONE
                 }
                 CaptureDetailRow(c, primary, dim, onSurface, onClick = { detailCapture = c }, rowState = rowState)
@@ -341,8 +343,12 @@ fun CapturesDetailScreen(
             isRunning = running,
             isQueued = crackQueue.any { CrackEngine.norm(it.bssid) == k },
             isExhausted = k in crackExhausted,
+            isAttempted = k in crackAttempted,
             onCrack = { viewModel.enqueueCrack(cap); detailCapture = null },
             onDequeue = { viewModel.dequeueCrack(cap); detailCapture = null },
+            onStop = { viewModel.cancelCrack() },   // keep sheet open so the status updates live
+            onForget = { viewModel.forgetCapture(cap); detailCapture = null },
+            onDeleteDevice = { viewModel.deleteDeviceCapture(cap); detailCapture = null },
             onDismiss = { detailCapture = null },
         )
     }
@@ -357,15 +363,23 @@ private fun CaptureDetailSheet(
     isRunning: Boolean,
     isQueued: Boolean,
     isExhausted: Boolean,
+    isAttempted: Boolean,
     onCrack: () -> Unit,
     onDequeue: () -> Unit,
+    onStop: () -> Unit,
+    onForget: () -> Unit,
+    onDeleteDevice: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val primary = MaterialTheme.colorScheme.primary
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     val onSurface = MaterialTheme.colorScheme.onSurface
     val green = Color(0xFF3DFF6E)
+    val warn = Color(0xFFFFA533)
+    val danger = Color(0xFFFF5C5C)
     val clipboard = LocalClipboardManager.current
+    var confirmForget by remember(capture.key) { mutableStateOf(false) }
+    var confirmDelete by remember(capture.key) { mutableStateOf(false) }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color(0xFF02060A), contentColor = primary) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 28.dp)
@@ -391,6 +405,7 @@ private fun CaptureDetailSheet(
                 isRunning -> "cracking…"
                 isQueued -> "queued"
                 isExhausted -> "no match (wordlist searched)"
+                isAttempted -> "tried — stopped before finishing"
                 onPhoneCrackable -> "ready to crack on-phone"
                 capture.isCrackable -> "crackable — no on-phone hash yet"
                 capture.isPartial -> "partial — can't crack"
@@ -402,16 +417,29 @@ private fun CaptureDetailSheet(
             Spacer(Modifier.height(16.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 when {
+                    isRunning -> SheetButton("[ stop ]", danger, onStop)
                     capture.isCracked ->
                         SheetButton("[ copy password ]", green) {
                             capture.password?.let { clipboard.setText(AnnotatedString(it)) }
                         }
-                    isQueued -> SheetButton("[ remove from queue ]", Color(0xFFFFA533), onDequeue)
-                    onPhoneCrackable && !isExhausted && !isRunning ->
+                    isQueued -> SheetButton("[ remove from queue ]", warn, onDequeue)
+                    onPhoneCrackable && !isExhausted ->
                         SheetButton("[ crack on phone ]", green, onCrack)
                     else -> {}
                 }
                 SheetButton("[ close ]", dim, onDismiss)
+            }
+
+            // Per-capture removal (two taps each). Forget = phone only (a linked Pi resends it);
+            // delete on device removes the .pcap on the Pi too (irreversible).
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SheetButton(if (confirmForget) "[ confirm forget ]" else "[ forget ]", warn) {
+                    if (confirmForget) onForget() else confirmForget = true
+                }
+                SheetButton(if (confirmDelete) "[ confirm — DELETE ]" else "[ delete on device ]", danger) {
+                    if (confirmDelete) onDeleteDevice() else confirmDelete = true
+                }
             }
         }
     }
@@ -563,7 +591,7 @@ private fun FiltersSheet(
 }
 
 /** Per-row crack status the list overlays onto a capture. */
-private enum class RowCrack { NONE, QUEUED, RUNNING, PAUSED, EXHAUSTED }
+private enum class RowCrack { NONE, QUEUED, RUNNING, PAUSED, EXHAUSTED, ATTEMPTED }
 
 /** One capture row: geo marker, SSID, coords (if any), relative age. */
 @Composable
@@ -631,6 +659,12 @@ private fun CaptureDetailRow(
                 // Tap to remove from the queue.
                 "queued ✕",
                 color = Color(0xFFFFA533), fontSize = 10.sp,
+                fontFamily = TerminalMono, modifier = Modifier.padding(end = 8.dp)
+            )
+            rowState == RowCrack.ATTEMPTED -> Text(
+                // Started before but not finished (stopped/interrupted) — still crackable; tap to resume.
+                "tried ▸",
+                color = Color(0xFFFFA533).copy(alpha = 0.85f), fontSize = 10.sp,
                 fontFamily = TerminalMono, modifier = Modifier.padding(end = 8.dp)
             )
             // We have the handshake (PMKID or EAPOL) on the phone → crackable locally right now.

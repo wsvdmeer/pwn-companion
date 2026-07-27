@@ -66,6 +66,12 @@ object CrackEngine {
     // finished crack shows a result and you don't burn hours re-running the same one.
     private val _exhausted = MutableStateFlow<Set<String>>(emptySet())
     val exhausted: StateFlow<Set<String>> = _exhausted.asStateFlow()
+
+    // Networks we've started cracking at least once but that didn't finish (stopped/interrupted, no
+    // hit yet). Lets the UI flag "already tried" so you don't unknowingly re-run the same one.
+    // Superseded once a network becomes cracked or exhausted.
+    private val _attempted = MutableStateFlow<Set<String>>(emptySet())
+    val attempted: StateFlow<Set<String>> = _attempted.asStateFlow()
     @Volatile private var resultsLoaded = false
 
     private var job: Job? = null
@@ -118,6 +124,7 @@ object CrackEngine {
         val key = norm(bssid)
         _cracked.update { it - key }
         _exhausted.update { it - key }
+        _attempted.update { it - key }
         clearCheckpoint(context.applicationContext, key)
         context.applicationContext.getSharedPreferences(RESULTS_PREFS, Context.MODE_PRIVATE)
             .edit().remove(key).apply()
@@ -195,6 +202,7 @@ object CrackEngine {
         if (pmkidH == null && eapolH == null) {
             _state.value = CrackState.Failed(bssid, ssid, "bad hash"); return true
         }
+        persistResultAttempted(context.applicationContext, key)   // flag "tried" from the first run
         // Per-flavour verify + native-batch closures (chosen once, reused by every worker).
         val verifyOne: (String) -> Boolean =
             if (pmkidH != null) { c -> WpaCracker.verify(pmkidH, c) }
@@ -368,27 +376,40 @@ object CrackEngine {
             val all = context.getSharedPreferences(RESULTS_PREFS, Context.MODE_PRIVATE).all
             val crackedNow = HashMap<String, String>()
             val exh = HashSet<String>()
+            val att = HashSet<String>()
             for ((k, v) in all) {
                 val s = v as? String ?: continue
                 when {
                     s.startsWith("c:") -> crackedNow[k] = s.substring(2)
                     s == "x" -> exh.add(k)
+                    s == "a" -> att.add(k)
                 }
             }
             if (crackedNow.isNotEmpty()) _cracked.update { crackedNow + it }
             if (exh.isNotEmpty()) _exhausted.value = exh
+            if (att.isNotEmpty()) _attempted.value = att
         }
     }
 
     private fun persistResultCracked(context: Context, bssidKey: String, password: String) {
         context.getSharedPreferences(RESULTS_PREFS, Context.MODE_PRIVATE)
             .edit().putString(bssidKey, "c:$password").apply()
+        _attempted.update { it - bssidKey }   // cracked supersedes "tried"
     }
 
     private fun persistResultExhausted(context: Context, bssidKey: String) {
         context.getSharedPreferences(RESULTS_PREFS, Context.MODE_PRIVATE)
             .edit().putString(bssidKey, "x").apply()
         _exhausted.update { it + bssidKey }
+        _attempted.update { it - bssidKey }   // "no match" supersedes "tried"
+    }
+
+    /** Mark a network as attempted (started at least once) unless it's already cracked/exhausted. */
+    private fun persistResultAttempted(context: Context, bssidKey: String) {
+        if (_exhausted.value.contains(bssidKey) || _cracked.value.containsKey(bssidKey)) return
+        context.getSharedPreferences(RESULTS_PREFS, Context.MODE_PRIVATE)
+            .edit().putString(bssidKey, "a").apply()
+        _attempted.update { it + bssidKey }
     }
 
     /** Worker count, honouring the gentle knobs: cap at 2 in easy-CPU mode, else half on battery
