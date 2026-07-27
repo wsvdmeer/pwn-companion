@@ -116,12 +116,18 @@ fun CapturesDetailScreen(
     val partial = remember(captures) { captures.count { it.isPartial } }
     val cracked = remember(captures) { captures.count { it.isCracked } }
     val filtered = remember(captures, query, geoOnly, crackedOnly, crackableOnly) {
+        val anyFilter = geoOnly || crackedOnly || crackableOnly
         captures
-            .filter {
-                (!geoOnly || it.isGeolocated) &&
-                (!crackedOnly || it.isCracked) &&
-                (!crackableOnly || WpaCracker.isCrackablePmkid(it.hash22000)) &&
-                (query.isBlank() || it.ssid.contains(query, ignoreCase = true))
+            .filter { c ->
+                // Toggle chips are OR'd — the union of whatever's on (none on = show all).
+                // `crackable` uses the same eapol/pmkid definition as the "N crackable" count.
+                val matchesFilter = !anyFilter ||
+                    (geoOnly && c.isGeolocated) ||
+                    (crackedOnly && c.isCracked) ||
+                    (crackableOnly && c.isCrackable)
+                // Search is AND'd on top of the filter union.
+                val matchesQuery = query.isBlank() || c.ssid.contains(query, ignoreCase = true)
+                matchesFilter && matchesQuery
             }
             .sortedByDescending { it.timestamp ?: 0L }
     }
