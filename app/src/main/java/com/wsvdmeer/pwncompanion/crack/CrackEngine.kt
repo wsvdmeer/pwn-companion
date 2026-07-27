@@ -191,13 +191,18 @@ object CrackEngine {
         val words = WordlistManager.words()
         val cores = workerCores(context)
         val quick = CrackSettings.quickCrack.value
-        // Active set: quick tries only the top-N; full tries everything. `limit` also drives the
-        // progress total, so the ETA reflects the quick set — not the whole list.
-        val limit = if (quick) minOf(QUICK_LIMIT, words.size.toLong()) else words.size.toLong()
+        val mangle = CrackSettings.mangle.value
+        val mult = if (mangle) MangleRules.size else 1
+        // Candidate space: quick uses only the top-N words; full uses all. Mangling expands each
+        // word into MangleRules.size variants, so the space (and the progress total that drives the
+        // ETA) is wordCount × mult.
+        val wordCount = if (quick) minOf(QUICK_LIMIT, words.size.toLong()) else words.size.toLong()
+        val limit = wordCount * mult
 
-        // Resume (full only): pick up from the saved checkpoint if valid for this wordlist. Indices
-        // come from one monotonic cursor, so everything below (cursor - inflight) is already done.
-        val wordlistId = WordlistManager.identity()
+        // Resume (full only): the checkpoint is tagged with the wordlist + mangle factor, so toggling
+        // mangle (which changes what each index means) invalidates a stale checkpoint instead of
+        // resuming into the wrong candidate. One monotonic cursor → everything below is done.
+        val wordlistId = WordlistManager.identity() + if (mangle) "+m$mult" else ""
         val startIndex = if (quick) 0L else loadCheckpoint(context, key, wordlistId).coerceIn(0L, limit)
         val cursor = AtomicLong(startIndex)
         val tried = AtomicLong(startIndex)
@@ -205,6 +210,12 @@ object CrackEngine {
         val startMs = System.currentTimeMillis()
         val useNative = NativeWpaCracker.available && NativeWpaCracker.verified
         val inflight = BATCH.toLong() * cores
+        // Map a flat candidate index to its passphrase: word = idx / mult, rule = idx % mult.
+        // With mangle off, mult == 1 so this is just words[idx] — no per-candidate allocation cost.
+        fun candidateAt(idx: Long): String {
+            val w = words[(idx / mult).toInt()]
+            return if (mangle) MangleRules.apply(w, (idx % mult).toInt()) else w
+        }
         _state.value = CrackState.Running(bssid, ssid, startIndex, limit, 0)
         if (!quick && startIndex > 0) Log.i(TAG, "resuming $ssid from $startIndex/$limit")
         Log.i(TAG, "cracking $ssid: ${if (quick) "quick" else "full"}, $cores workers, " +
@@ -232,18 +243,26 @@ object CrackEngine {
                         val start = cursor.getAndAdd(BATCH.toLong())
                         if (start >= limit) return@launch
                         val end = minOf(start + BATCH, limit)
-                        val n = (end - start).toInt()
                         if (useNative) {
-                            val batch = Array(n) { words[(start + it).toInt()] }
-                            val hit = NativeWpaCracker.crackBatch(h.essid, h.macAp, h.macSta, h.pmkid, 4096, batch)
-                            tried.addAndGet(n.toLong())
-                            if (hit >= 0) { found.set(batch[hit]); return@launch }
+                            // Build the batch of candidates for these indices, dropping any that fall
+                            // outside WPA's 8..63-char passphrase range (mangling can push a word past
+                            // 63). Indices still advance for all of them so progress/checkpoint stay
+                            // aligned to the flat candidate space.
+                            val batch = ArrayList<String>(BATCH)
+                            var i = start
+                            while (i < end) { val c = candidateAt(i); if (c.length in 8..63) batch.add(c); i++ }
+                            tried.addAndGet(end - start)
+                            if (batch.isNotEmpty()) {
+                                val arr = batch.toTypedArray()
+                                val hit = NativeWpaCracker.crackBatch(h.essid, h.macAp, h.macSta, h.pmkid, 4096, arr)
+                                if (hit >= 0) { found.set(arr[hit]); return@launch }
+                            }
                         } else {
                             var i = start
                             while (i < end) {
                                 if (found.get() != null || skip.get() || paused.get() || !isActive) return@launch
-                                val cand = words[i.toInt()]
-                                if (WpaCracker.verify(h, cand)) { found.set(cand); return@launch }
+                                val cand = candidateAt(i)
+                                if (cand.length in 8..63 && WpaCracker.verify(h, cand)) { found.set(cand); return@launch }
                                 tried.incrementAndGet()
                                 i++
                             }
