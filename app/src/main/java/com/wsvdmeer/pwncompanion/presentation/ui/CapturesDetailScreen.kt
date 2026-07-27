@@ -261,7 +261,7 @@ fun CapturesDetailScreen(
                         SearchField(query, onQuery = { query = it }, primary = primary, dim = dim)
                     }
                     Text(
-                        if (activeFilters > 0) "[ filters · $activeFilters ]" else "[ filters ]",
+                        if (activeFilters > 0) "[ options · $activeFilters ]" else "[ options ]",
                         color = if (activeFilters > 0) primary else dim,
                         fontSize = 12.sp, fontFamily = TerminalMono,
                         modifier = Modifier
@@ -566,9 +566,9 @@ private fun FiltersSheet(
                 .padding(horizontal = 16.dp)
                 .padding(bottom = 28.dp)
         ) {
-            Text("[ FILTERS ]", color = primary, fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = TerminalMono)
+            Text("[ OPTIONS ]", color = primary, fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = TerminalMono)
             Spacer(Modifier.height(12.dp))
-            Text("show", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
+            Text("filter", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
             Spacer(Modifier.height(6.dp))
             Row(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
