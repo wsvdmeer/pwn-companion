@@ -111,8 +111,6 @@ fun CapturesDetailScreen(
     val gentleCpu by CrackSettings.gentleCpu.collectAsState()
     val chargerOnly by CrackSettings.chargerOnly.collectAsState()
     val lowBatteryStop by CrackSettings.lowBatteryStop.collectAsState()
-    val quickCrack by CrackSettings.quickCrack.collectAsState()
-    val mangle by CrackSettings.mangle.collectAsState()
 
     val primary = MaterialTheme.colorScheme.primary
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
@@ -320,12 +318,9 @@ fun CapturesDetailScreen(
             onCracked = { crackedOnly = !crackedOnly },
             showPower = crackable > 0,
             gentleCpu = gentleCpu, chargerOnly = chargerOnly, lowBatteryStop = lowBatteryStop,
-            quickCrack = quickCrack, mangle = mangle,
             onGentle = { CrackSettings.setGentleCpu(context, !gentleCpu) },
             onCharger = { CrackSettings.setChargerOnly(context, !chargerOnly) },
             onLowBatt = { CrackSettings.setLowBatteryStop(context, !lowBatteryStop) },
-            onQuick = { CrackSettings.setQuickCrack(context, !quickCrack) },
-            onMangle = { CrackSettings.setMangle(context, !mangle) },
             onDismiss = { showFilters = false },
         )
     }
@@ -422,6 +417,23 @@ private fun CaptureDetailSheet(
             }
             DetailKv("status", status, dim, if (capture.isCracked) green else onSurface)
             if (capture.isCracked) DetailKv("password", capture.password ?: "", dim, green)
+
+            // Search options for THIS crack, right where you launch it. quick/mangle define how
+            // much gets tried and lock in when the run starts. Persisted (same toggles as the
+            // [ options ] sheet), so a choice here sticks. Only shown when a crack can be started.
+            val canStart = onPhoneCrackable && !isRunning && !isQueued && !capture.isCracked && !isExhausted
+            if (canStart) {
+                val ctx = LocalContext.current
+                val quick by CrackSettings.quickCrack.collectAsState()
+                val mangle by CrackSettings.mangle.collectAsState()
+                Spacer(Modifier.height(14.dp))
+                Text("search", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip("quick", quick, primary, dim) { CrackSettings.setQuickCrack(ctx, !quick) }
+                    FilterChip("mangle", mangle, primary, dim) { CrackSettings.setMangle(ctx, !mangle) }
+                }
+            }
 
             Spacer(Modifier.height(16.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -547,10 +559,8 @@ private fun FiltersSheet(
     geo: Boolean, crackableF: Boolean, cracked: Boolean,
     onGeo: () -> Unit, onCrackable: () -> Unit, onCracked: () -> Unit,
     showPower: Boolean,
-    gentleCpu: Boolean, chargerOnly: Boolean, lowBatteryStop: Boolean, quickCrack: Boolean,
-    mangle: Boolean,
-    onGentle: () -> Unit, onCharger: () -> Unit, onLowBatt: () -> Unit, onQuick: () -> Unit,
-    onMangle: () -> Unit,
+    gentleCpu: Boolean, chargerOnly: Boolean, lowBatteryStop: Boolean,
+    onGentle: () -> Unit, onCharger: () -> Unit, onLowBatt: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val primary = MaterialTheme.colorScheme.primary
@@ -580,16 +590,14 @@ private fun FiltersSheet(
             }
             if (showPower) {
                 Spacer(Modifier.height(16.dp))
-                Text("cracking", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
+                // Ongoing power policy (applies to whatever's cracking). The per-crack search
+                // choices (quick / mangle) live on each capture's crack sheet instead.
+                Text("cracking power", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
                 Spacer(Modifier.height(6.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Quick: try only the top-N (fast, may miss) instead of the whole list.
-                    FilterChip("quick", quickCrack, primary, dim, onQuick)
-                    // Mangle: expand each word into common variants (Word123, Welkom2024!, …) — wider, slower.
-                    FilterChip("mangle", mangle, primary, dim, onMangle)
                     FilterChip("easy cpu", gentleCpu, primary, dim, onGentle)
                     FilterChip("charger only", chargerOnly, primary, dim, onCharger)
                     FilterChip("stop <15%", lowBatteryStop, primary, dim, onLowBatt)
