@@ -48,8 +48,10 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -98,6 +100,7 @@ fun CapturesDetailScreen(
     var crackedOnly by remember { mutableStateOf(false) }
     var crackableOnly by remember { mutableStateOf(false) }
     var showFilters by remember { mutableStateOf(false) }
+    var detailCapture by remember { mutableStateOf<CaptureEntry?>(null) }
 
     // Gentle-knob power settings for cracking (persisted; also read by CrackEngine).
     val context = LocalContext.current
@@ -274,26 +277,16 @@ fun CapturesDetailScreen(
                 Spacer(Modifier.height(4.dp))
             }
 
-            // ── the capture rows ──
+            // ── the capture rows ── tap any row to open its detail sheet.
             items(filtered, key = { it.key }) { c ->
                 val k = CrackEngine.norm(c.bssid)
-                val isCurrent = currentKey == k
-                val isQueued = k in queuedKeys
-                val isExhausted = k in crackExhausted
-                val ready = !c.isCracked && !isExhausted && WpaCracker.isCrackablePmkid(c.hash22000)
-                // Tap to queue; tap a queued row to remove it; running/exhausted rows aren't tappable.
-                val onTap: (() -> Unit)? = when {
-                    !ready || isCurrent -> null
-                    isQueued -> ({ viewModel.dequeueCrack(c) })
-                    else -> ({ viewModel.enqueueCrack(c) })
-                }
                 val rowState = when {
-                    isCurrent -> if (currentPaused) RowCrack.PAUSED else RowCrack.RUNNING
-                    isQueued -> RowCrack.QUEUED
-                    isExhausted -> RowCrack.EXHAUSTED
+                    currentKey == k -> if (currentPaused) RowCrack.PAUSED else RowCrack.RUNNING
+                    k in queuedKeys -> RowCrack.QUEUED
+                    k in crackExhausted -> RowCrack.EXHAUSTED
                     else -> RowCrack.NONE
                 }
-                CaptureDetailRow(c, primary, dim, onSurface, onCrack = onTap, rowState = rowState)
+                CaptureDetailRow(c, primary, dim, onSurface, onClick = { detailCapture = c }, rowState = rowState)
             }
             item { Spacer(Modifier.height(24.dp)) }
         }
@@ -315,6 +308,122 @@ fun CapturesDetailScreen(
             onDismiss = { showFilters = false },
         )
     }
+
+    detailCapture?.let { cap ->
+        val k = CrackEngine.norm(cap.bssid)
+        val running = when (val s = crackState) {
+            is CrackState.Running -> CrackEngine.norm(s.bssid) == k
+            is CrackState.Paused -> CrackEngine.norm(s.bssid) == k
+            else -> false
+        }
+        CaptureDetailSheet(
+            capture = cap,
+            onPhoneCrackable = WpaCracker.isCrackablePmkid(cap.hash22000),
+            isRunning = running,
+            isQueued = crackQueue.any { CrackEngine.norm(it.bssid) == k },
+            isExhausted = k in crackExhausted,
+            onCrack = { viewModel.enqueueCrack(cap); detailCapture = null },
+            onDequeue = { viewModel.dequeueCrack(cap); detailCapture = null },
+            onDismiss = { detailCapture = null },
+        )
+    }
+}
+
+/** Full detail for one capture (tap a row): all we know about it + the crack action. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CaptureDetailSheet(
+    capture: CaptureEntry,
+    onPhoneCrackable: Boolean,
+    isRunning: Boolean,
+    isQueued: Boolean,
+    isExhausted: Boolean,
+    onCrack: () -> Unit,
+    onDequeue: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    val green = Color(0xFF3DFF6E)
+    val clipboard = LocalClipboardManager.current
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color(0xFF02060A), contentColor = primary) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 28.dp)
+        ) {
+            Text(
+                capture.ssid.ifBlank { "(hidden)" },
+                color = onSurface, fontWeight = FontWeight.Bold, fontSize = 15.sp,
+                fontFamily = TerminalMono, maxLines = 1, softWrap = false
+            )
+            Spacer(Modifier.height(12.dp))
+            DetailKv("bssid", capture.bssid.ifBlank { "—" }, dim, onSurface)
+            DetailKv("quality", capture.quality ?: "unknown", dim, onSurface)
+            DetailKv(
+                "location",
+                if (capture.isGeolocated)
+                    "%.5f, %.5f  ±%.0fm".format(capture.latitude, capture.longitude, capture.accuracy ?: 0.0)
+                else "not geolocated",
+                dim, onSurface
+            )
+            DetailKv("captured", captureWhen(capture.timestamp), dim, onSurface)
+            val status = when {
+                capture.isCracked -> "cracked"
+                isRunning -> "cracking…"
+                isQueued -> "queued"
+                isExhausted -> "no match (wordlist searched)"
+                onPhoneCrackable -> "ready to crack on-phone"
+                capture.isCrackable -> "crackable — no on-phone PMKID hash yet"
+                capture.isPartial -> "partial — can't crack"
+                else -> "—"
+            }
+            DetailKv("status", status, dim, if (capture.isCracked) green else onSurface)
+            if (capture.isCracked) DetailKv("password", capture.password ?: "", dim, green)
+
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                when {
+                    capture.isCracked ->
+                        SheetButton("[ copy password ]", green) {
+                            capture.password?.let { clipboard.setText(AnnotatedString(it)) }
+                        }
+                    isQueued -> SheetButton("[ remove from queue ]", Color(0xFFFFA533), onDequeue)
+                    onPhoneCrackable && !isExhausted && !isRunning ->
+                        SheetButton("[ crack on phone ]", green, onCrack)
+                    else -> {}
+                }
+                SheetButton("[ close ]", dim, onDismiss)
+            }
+        }
+    }
+}
+
+/** key : value line in the capture detail sheet. */
+@Composable
+private fun DetailKv(k: String, v: String, dim: Color, valueColor: Color) {
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+        Text(k.padEnd(10), color = dim, fontSize = 12.sp, fontFamily = TerminalMono)
+        Text(v, color = valueColor, fontSize = 12.sp, fontFamily = TerminalMono)
+    }
+}
+
+@Composable
+private fun SheetButton(label: String, color: Color, onClick: () -> Unit) {
+    Text(
+        label, color = color, fontSize = 13.sp, fontFamily = TerminalMono,
+        modifier = Modifier
+            .border(1.dp, color.copy(alpha = 0.6f))
+            .clickable { onClick() }
+            .padding(horizontal = 10.dp, vertical = 8.dp)
+    )
+}
+
+/** "22h ago · 2026-07-27 12:30" from a Unix-seconds timestamp. */
+private fun captureWhen(ts: Long?): String {
+    if (ts == null || ts <= 0) return "—"
+    val date = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+        .format(java.util.Date(ts * 1000))
+    return "${relativeAgeLocal(ts)} ago · $date"
 }
 
 /** Bottom sheet holding the capture filters + cracking-power knobs (keeps the screen uncluttered). */
@@ -382,13 +491,13 @@ private fun CaptureDetailRow(
     primary: Color,
     dim: Color,
     onSurface: Color,
-    onCrack: (() -> Unit)? = null,
+    onClick: () -> Unit,
     rowState: RowCrack = RowCrack.NONE,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .then(if (onCrack != null) Modifier.clickable { onCrack() } else Modifier)
+            .clickable { onClick() }
             .padding(vertical = 3.dp)
     ) {
         Text(
