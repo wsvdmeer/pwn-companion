@@ -158,93 +158,9 @@ fun CapturesDetailScreen(
         }
         ConsoleRuleLocal()
 
-        // ── pixel map of catch locations (real basemap, grey; catches in green) ──
-        if (geoCount > 0) {
-            val hasFix = gps?.isValid() == true
-            Text(
-                buildAnnotatedString {
-                    append("map · $geoCount geolocated   ")
-                    withStyle(SpanStyle(color = Color(0xFF3DFF6E))) { append("■") }
-                    append(" catch")
-                    if (hasFix) {
-                        append("   ")
-                        withStyle(SpanStyle(color = Color(0xFFFFA533))) { append("■") }
-                        append(" you")
-                    }
-                },
-                color = dim, fontSize = 11.sp, fontFamily = TerminalMono
-            )
-            Spacer(Modifier.height(4.dp))
-            PixelBasemap(
-                points = captures.filter { it.isGeolocated },
-                current = gps?.takeIf { it.isValid() },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(1.dp, MaterialTheme.colorScheme.outline)
-                    .background(Color(0xFF02060A))
-                    .padding(4.dp)
-            )
-            Spacer(Modifier.height(8.dp))
-            ConsoleRuleLocal()
-        }
-
-        // ── search + filters ────────────────────────────────────────────────
-        // Compact: full-width search + a single [ filters ] button that opens a bottom sheet with
-        // the toggles + cracking-power knobs, so the screen isn't a wall of chips.
-        Spacer(Modifier.height(6.dp))
-        val activeFilters = (if (geoOnly) 1 else 0) + (if (crackableOnly) 1 else 0) + (if (crackedOnly) 1 else 0)
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .border(1.dp, MaterialTheme.colorScheme.outline)
-                    .padding(horizontal = 8.dp, vertical = 6.dp)
-            ) {
-                Text("/", color = dim, fontSize = 12.sp, fontFamily = TerminalMono)
-                Spacer(Modifier.width(6.dp))
-                SearchField(query, onQuery = { query = it }, primary = primary, dim = dim)
-            }
-            Text(
-                if (activeFilters > 0) "[ filters · $activeFilters ]" else "[ filters ]",
-                color = if (activeFilters > 0) primary else dim,
-                fontSize = 12.sp, fontFamily = TerminalMono,
-                modifier = Modifier
-                    .border(1.dp, if (activeFilters > 0) primary else MaterialTheme.colorScheme.outline)
-                    .clickable { showFilters = true }
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
-            )
-        }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            "${filtered.size} / ${captures.size} shown",
-            color = dim, fontSize = 11.sp, fontFamily = TerminalMono
-        )
-        // Crackability breakdown — a capture only counts as a real win once it yields
-        // a hash. Partials (only M1, no PMKID) can't crack; nudge you to re-hunt them.
-        if (crackable > 0 || partial > 0) {
-            Text(
-                buildAnnotatedString {
-                    if (cracked > 0) {
-                        withStyle(SpanStyle(color = Color(0xFF3DFF6E), fontWeight = FontWeight.Bold)) { append("$cracked cracked") }
-                        append("  ·  ")
-                    }
-                    withStyle(SpanStyle(color = Color(0xFF3DFF6E))) { append("$crackable crackable") }
-                    if (partial > 0) {
-                        append("  ·  ")
-                        withStyle(SpanStyle(color = Color(0xFFFFA533))) { append("$partial partial") }
-                    }
-                },
-                fontSize = 11.sp, fontFamily = TerminalMono
-            )
-        }
-        Spacer(Modifier.height(4.dp))
-
-        // ── on-phone crack progress (Phase 4) ────────────────────────────────
+        // Crack progress stays pinned under the header (visible while you scroll the list).
         if (crackState !is CrackState.Idle) {
-            Spacer(Modifier.height(2.dp))
+            Spacer(Modifier.height(6.dp))
             CrackBanner(
                 state = crackState,
                 queueCount = crackQueue.size,
@@ -252,12 +168,11 @@ fun CapturesDetailScreen(
                 onCancel = { viewModel.cancelCrack() },
                 onDismiss = { viewModel.dismissCrack() },
             )
-            Spacer(Modifier.height(6.dp))
         }
 
-        // ── full list ───────────────────────────────────────────────────────
-        // Which capture (by BSSID) is cracking now, and which are queued — so rows can show
-        // "cracking" / "queued" and a tap can enqueue (or dequeue a queued one) even mid-crack.
+        // Everything below scrolls together — map, search/filters, counts, and the list — so the
+        // big map scrolls away with the list instead of pinning the top of the screen.
+        val activeFilters = (if (geoOnly) 1 else 0) + (if (crackableOnly) 1 else 0) + (if (crackedOnly) 1 else 0)
         val currentKey = when (val s = crackState) {
             is CrackState.Running -> CrackEngine.norm(s.bssid)
             is CrackState.Paused -> CrackEngine.norm(s.bssid)
@@ -265,7 +180,95 @@ fun CapturesDetailScreen(
         }
         val currentPaused = crackState is CrackState.Paused
         val queuedKeys = remember(crackQueue) { crackQueue.map { CrackEngine.norm(it.bssid) }.toSet() }
+
         LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            // ── pixel map of catch locations (scrolls with the list) ──
+            if (geoCount > 0) {
+                item(key = "map") {
+                    val hasFix = gps?.isValid() == true
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        buildAnnotatedString {
+                            append("map · $geoCount geolocated   ")
+                            withStyle(SpanStyle(color = Color(0xFF3DFF6E))) { append("■") }
+                            append(" catch")
+                            if (hasFix) {
+                                append("   ")
+                                withStyle(SpanStyle(color = Color(0xFFFFA533))) { append("■") }
+                                append(" you")
+                            }
+                        },
+                        color = dim, fontSize = 11.sp, fontFamily = TerminalMono
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    PixelBasemap(
+                        points = captures.filter { it.isGeolocated },
+                        current = gps?.takeIf { it.isValid() },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, MaterialTheme.colorScheme.outline)
+                            .background(Color(0xFF02060A))
+                            .padding(4.dp)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    ConsoleRuleLocal()
+                }
+            }
+
+            // ── search + filters + counts (scroll too) ──
+            item(key = "controls") {
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .border(1.dp, MaterialTheme.colorScheme.outline)
+                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                    ) {
+                        Text("/", color = dim, fontSize = 12.sp, fontFamily = TerminalMono)
+                        Spacer(Modifier.width(6.dp))
+                        SearchField(query, onQuery = { query = it }, primary = primary, dim = dim)
+                    }
+                    Text(
+                        if (activeFilters > 0) "[ filters · $activeFilters ]" else "[ filters ]",
+                        color = if (activeFilters > 0) primary else dim,
+                        fontSize = 12.sp, fontFamily = TerminalMono,
+                        modifier = Modifier
+                            .border(1.dp, if (activeFilters > 0) primary else MaterialTheme.colorScheme.outline)
+                            .clickable { showFilters = true }
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "${filtered.size} / ${captures.size} shown",
+                    color = dim, fontSize = 11.sp, fontFamily = TerminalMono
+                )
+                // Crackability breakdown — a capture only counts as a real win once it yields a
+                // hash. Partials (only M1, no PMKID) can't crack; nudge you to re-hunt them.
+                if (crackable > 0 || partial > 0) {
+                    Text(
+                        buildAnnotatedString {
+                            if (cracked > 0) {
+                                withStyle(SpanStyle(color = Color(0xFF3DFF6E), fontWeight = FontWeight.Bold)) { append("$cracked cracked") }
+                                append("  ·  ")
+                            }
+                            withStyle(SpanStyle(color = Color(0xFF3DFF6E))) { append("$crackable crackable") }
+                            if (partial > 0) {
+                                append("  ·  ")
+                                withStyle(SpanStyle(color = Color(0xFFFFA533))) { append("$partial partial") }
+                            }
+                        },
+                        fontSize = 11.sp, fontFamily = TerminalMono
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+            }
+
+            // ── the capture rows ──
             items(filtered, key = { it.key }) { c ->
                 val k = CrackEngine.norm(c.bssid)
                 val isCurrent = currentKey == k
