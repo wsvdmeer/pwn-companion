@@ -15,6 +15,7 @@ import com.wsvdmeer.pwncompanion.models.GpsData
 import com.wsvdmeer.pwncompanion.models.LearningStats
 import com.wsvdmeer.pwncompanion.models.PersonalityState
 import com.wsvdmeer.pwncompanion.models.Strategy
+import com.wsvdmeer.pwncompanion.storage.CaptureStore
 import com.wsvdmeer.pwncompanion.protocol.MessageHandler
 import com.wsvdmeer.pwncompanion.protocol.OutgoingMessageQueue
 import com.wsvdmeer.pwncompanion.services.CompanionBackgroundService
@@ -183,6 +184,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         // Restore persisted crack outcomes so cracked passwords + "no match" tags survive restart.
         CrackEngine.loadResults(getApplication())
+        // Seed the capture list from the local cache so the app is usable before (or without) the
+        // Pi linking — the live device history merges on top once it connects.
+        _captures.value = CaptureStore.load(getApplication())
     }
 
     /** Queue a capture for on-phone cracking (starts the engine if idle). */
@@ -639,10 +643,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         _currentImageTimestamp.value = freshest.lastImageTimestamp
                     }
 
-                // Surface the device's capture history (newest first across all nodes)
-                val allCaptures = states.values
-                    .flatMap { it.captures }
-                    .sortedByDescending { it.timestamp ?: 0L }
+                // Fold the device's live capture history into the on-disk cache, then show the
+                // merged set (newest first). Persisting here is what lets captures — and their 22000
+                // hashes — survive a restart and stay crackable with the Pi disconnected.
+                val liveCaptures = states.values.flatMap { it.captures }
+                val allCaptures = CaptureStore.merge(getApplication(), liveCaptures)
                 if (allCaptures.size > _captures.value.size) {
                     appendLog("[*] captures :: ${allCaptures.size} logged")
                 }
@@ -750,6 +755,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Log.e(tag, "Error sending pwnagotchi command: ${e.message}", e)
             _errorMessage.value = "Failed to send command: ${e.message}"
         }
+    }
+
+    /**
+     * Clear the phone's local capture cache. Cracked passwords are kept (they live in CrackEngine).
+     * With the Pi linked this only sticks briefly — it resends its full history — so it's mainly for
+     * pruning stale offline captures; use [wipeDeviceCaptures] to also delete them on the device.
+     */
+    fun clearPhoneCaptures() {
+        CaptureStore.clear(getApplication())
+        networkService?.clearCaptures()   // else the next deviceStates emit re-merges them
+        _captures.value = emptyList()
+        appendLog("[>] phone capture cache cleared")
+    }
+
+    /**
+     * Wipe captured handshakes on the Pwnagotchi (deletes the .pcap files — irreversible) and clear
+     * the phone cache too, for a clean slate. Cracked passwords are preserved.
+     */
+    fun wipeDeviceCaptures() {
+        CaptureStore.clear(getApplication())
+        networkService?.clearCaptures()
+        _captures.value = emptyList()
+        sendPwnagotchiCommand("clear_captures")
+        appendLog("[>] wipe device handshakes → sent")
     }
 
     /**

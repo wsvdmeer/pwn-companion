@@ -100,6 +100,7 @@ fun CapturesDetailScreen(
     var crackedOnly by remember { mutableStateOf(false) }
     var crackableOnly by remember { mutableStateOf(false) }
     var showFilters by remember { mutableStateOf(false) }
+    var showManage by remember { mutableStateOf(false) }
     var detailCapture by remember { mutableStateOf<CaptureEntry?>(null) }
 
     // Gentle-knob power settings for cracking (persisted; also read by CrackEngine).
@@ -165,6 +166,13 @@ fun CapturesDetailScreen(
                     modifier = Modifier.clickable { viewModel.injectTestCapture() }
                 )
             }
+            Spacer(Modifier.weight(1f))
+            // Clear/wipe captures (phone cache, or the Pi's handshakes too).
+            Text(
+                "[ clear ]",
+                color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, fontFamily = TerminalMono,
+                modifier = Modifier.clickable { showManage = true }
+            )
         }
         ConsoleRuleLocal()
 
@@ -311,6 +319,15 @@ fun CapturesDetailScreen(
         )
     }
 
+    if (showManage) {
+        ManageCapturesSheet(
+            count = captures.size,
+            onClearPhone = { viewModel.clearPhoneCaptures(); showManage = false },
+            onWipeDevice = { viewModel.wipeDeviceCaptures(); showManage = false },
+            onDismiss = { showManage = false },
+        )
+    }
+
     detailCapture?.let { cap ->
         val k = CrackEngine.norm(cap.bssid)
         val running = when (val s = crackState) {
@@ -418,6 +435,64 @@ private fun SheetButton(label: String, color: Color, onClick: () -> Unit) {
             .clickable { onClick() }
             .padding(horizontal = 10.dp, vertical = 8.dp)
     )
+}
+
+/** Manage captures: clear the phone cache, or wipe the Pi's handshakes too. Each action takes two
+ *  taps (the second confirms) since wiping the device is irreversible. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ManageCapturesSheet(
+    count: Int,
+    onClearPhone: () -> Unit,
+    onWipeDevice: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    val warn = Color(0xFFFFA533)
+    val danger = Color(0xFFFF5C5C)
+    var confirmPhone by remember { mutableStateOf(false) }
+    var confirmWipe by remember { mutableStateOf(false) }
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color(0xFF02060A), contentColor = primary) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 28.dp)) {
+            Text("[ MANAGE CAPTURES ]", color = primary, fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = TerminalMono)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "$count in the list · cracked passwords are always kept",
+                color = dim, fontSize = 11.sp, fontFamily = TerminalMono
+            )
+
+            Spacer(Modifier.height(16.dp))
+            Text("clear phone cache", color = onSurface, fontSize = 12.sp, fontFamily = TerminalMono)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "Drops the locally-stored captures. A connected Pi resends its history, so this mainly prunes stale offline grabs.",
+                color = dim, fontSize = 10.sp, fontFamily = TerminalMono
+            )
+            Spacer(Modifier.height(6.dp))
+            SheetButton(
+                if (confirmPhone) "[ confirm — clear phone ]" else "[ clear phone cache ]",
+                if (confirmPhone) warn else primary,
+            ) { if (confirmPhone) onClearPhone() else confirmPhone = true }
+
+            Spacer(Modifier.height(18.dp))
+            Text("wipe device handshakes", color = onSurface, fontSize = 12.sp, fontFamily = TerminalMono)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "Deletes the .pcap handshakes on the Pwnagotchi — irreversible — and clears the phone too.",
+                color = dim, fontSize = 10.sp, fontFamily = TerminalMono
+            )
+            Spacer(Modifier.height(6.dp))
+            SheetButton(
+                if (confirmWipe) "[ confirm — WIPE device ]" else "[ wipe device handshakes ]",
+                danger,
+            ) { if (confirmWipe) onWipeDevice() else confirmWipe = true }
+
+            Spacer(Modifier.height(18.dp))
+            SheetButton("[ close ]", dim, onDismiss)
+        }
+    }
 }
 
 /** "22h ago · 2026-07-27 12:30" from a Unix-seconds timestamp. */
@@ -642,8 +717,11 @@ private fun CrackBanner(
                     )
                 }
                 Spacer(Modifier.height(4.dp))
+                // Lead with the handshake type + engine ("eapol · native") so it's clear what's
+                // being cracked and whether the fast native path is in use.
+                val modePrefix = if (state.mode.isNotEmpty()) "${state.mode} · " else ""
                 Text(
-                    "${state.tried} / ${state.total} (${(frac * 100).roundToInt()}%) · ${state.perSec}/s · eta $eta",
+                    "$modePrefix${state.tried} / ${state.total} (${(frac * 100).roundToInt()}%) · ${state.perSec}/s · eta $eta",
                     color = dim, fontSize = 11.sp, fontFamily = TerminalMono
                 )
                 Spacer(Modifier.height(5.dp))
