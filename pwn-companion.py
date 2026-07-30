@@ -2092,6 +2092,12 @@ class PwnCompanion(Plugin):
             elif action == "delete_capture":
                 # Delete one capture's handshake files, matched by BSSID (in params "value").
                 self._delete_capture(params.get("value"))
+            elif action == "reboot":
+                log.info("[pwn-companion] 🔁 reboot requested by app")
+                subprocess.Popen(["sudo", "reboot"])            # fire-and-forget; system goes down
+            elif action in ("shutdown", "poweroff"):
+                log.info("[pwn-companion] ⏻ shutdown requested by app")
+                subprocess.Popen(["sudo", "shutdown", "-h", "now"])
             else:
                 log.warning(f"[pwn-companion] Unknown command action: {action}")
 
