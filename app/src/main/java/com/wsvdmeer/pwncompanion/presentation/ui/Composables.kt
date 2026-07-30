@@ -64,6 +64,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.wsvdmeer.pwncompanion.utils.ImageUtil
 import androidx.compose.material3.TopAppBar
@@ -665,15 +666,19 @@ private fun ConsoleLabel(text: String) {
 }
 
 @Composable
-private fun ConsoleRow(key: String, value: String, valueColor: Color) {
-    Row {
+private fun ConsoleRow(key: String, value: String, valueColor: Color, onClick: (() -> Unit)? = null) {
+    Row(modifier = if (onClick != null) Modifier.clickable { onClick() } else Modifier) {
         Text(
             key.padEnd(7) + ": ",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontSize = 12.sp,
             lineHeight = 18.sp
         )
-        Text(value, color = valueColor, fontSize = 12.sp, lineHeight = 18.sp, maxLines = 1)
+        Text(
+            value, color = valueColor, fontSize = 12.sp, lineHeight = 18.sp, maxLines = 1,
+            // Underline signals a tappable link (terminal-style).
+            textDecoration = if (onClick != null) TextDecoration.Underline else null,
+        )
     }
 }
 
@@ -689,6 +694,8 @@ private fun ConsoleStatusBlock(
     val online = device?.isConnected == true
     val primary = MaterialTheme.colorScheme.primary
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    val uri = androidx.compose.ui.platform.LocalUriHandler.current
+    val piIp = device?.ipAddress?.takeIf { it.isNotBlank() && it != "?" }
     ConsoleRow(
         "link",
         when {
@@ -702,16 +709,20 @@ private fun ConsoleStatusBlock(
             online -> primary
             networkingArmed -> MaterialTheme.colorScheme.tertiary
             else -> dim
-        }
+        },
+        // Tap the live link → open the Pwnagotchi's web UI (port 8080) over the BT tether.
+        onClick = if (online && piIp != null) ({ uri.openUri("http://$piIp:8080") }) else null,
     )
     if (device != null) {
         ConsoleRow("node", "${device.pwnagotchiName ?: device.deviceName}   ws:${device.port}", MaterialTheme.colorScheme.onSurface)
         ConsoleRow("mode", if (isAutoMode) "auto · hunting" else "manual · paused", if (isAutoMode) primary else MaterialTheme.colorScheme.tertiary)
     }
+    // App version + build (matches the APK manifest); tap → the pwn-companion GitHub.
     ConsoleRow(
         "version",
-        "v${com.wsvdmeer.pwncompanion.BuildConfig.VERSION_NAME}",
-        dim
+        "v${com.wsvdmeer.pwncompanion.BuildConfig.VERSION_NAME} (build ${com.wsvdmeer.pwncompanion.BuildConfig.VERSION_CODE})",
+        dim,
+        onClick = { uri.openUri("https://github.com/wsvdmeer/pwn-companion") },
     )
     // GPS is shown compactly with just a fix indicator here; full detail is in the
     // dedicated [ gps ] block below. No "queue" row — it flips 0↔1 each GPS tick and
