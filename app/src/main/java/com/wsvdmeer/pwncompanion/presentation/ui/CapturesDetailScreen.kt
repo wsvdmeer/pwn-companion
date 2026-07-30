@@ -401,6 +401,7 @@ private fun CaptureDetailSheet(
     val clipboard = LocalClipboardManager.current
     var confirmForget by remember(capture.key) { mutableStateOf(false) }
     var confirmDelete by remember(capture.key) { mutableStateOf(false) }
+    var hashCopied by remember(capture.key) { mutableStateOf(false) }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color(0xFF02060A), contentColor = primary) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 28.dp)
@@ -472,6 +473,21 @@ private fun CaptureDetailSheet(
                     else -> {}
                 }
                 SheetButton("[ close ]", dim, onDismiss)
+            }
+
+            // Offload: copy the hashcat-22000 line to crack on a PC/GPU (millions/s vs the phone's
+            // hundreds) — for keys the phone can't get. Shown whenever we have a distilled hash.
+            if (!capture.hash22000.isNullOrBlank()) {
+                Spacer(Modifier.height(10.dp))
+                SheetButton(if (hashCopied) "[ hash copied ✓ ]" else "[ copy hash ]", primary) {
+                    clipboard.setText(AnnotatedString(capture.hash22000!!))
+                    hashCopied = true
+                }
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    "paste into `hashcat -m 22000` on a PC for GPU cracking",
+                    color = dim, fontSize = 10.sp, fontFamily = TerminalMono
+                )
             }
 
             // Per-capture removal (two taps each). Forget = phone only (a linked Pi resends it);
