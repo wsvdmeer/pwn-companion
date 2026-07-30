@@ -13,9 +13,11 @@ import android.util.Log
 object KeyGenerators {
     private const val TAG = "KeyGenerators"
 
-    /** Registered generators, in priority order. ISP key-derivations (verified against reference
-     *  vectors) go first — they're likely THE key when they match; ESSID guesses run for everyone. */
-    private val generators: List<KeyGenerator> = listOf(ThomsonKeygen, EssidKeygen)
+    /** Registered generators, in priority order. **None active on main** — the ISP/ESSID generators
+     *  live on the `feature/isp-keygen` branch (deprioritized in favour of GPU-offload cracking).
+     *  With this empty, the framework is inert: candidatesFor returns nothing, so a crack is a plain
+     *  wordlist run. Re-add generators here to switch them back on. */
+    private val generators: List<KeyGenerator> = emptyList()
 
     /** Generated candidates for a capture (matching generators' output, 8..63 chars, de-duped). */
     fun candidatesFor(essid: String, bssid: String): List<String> {
