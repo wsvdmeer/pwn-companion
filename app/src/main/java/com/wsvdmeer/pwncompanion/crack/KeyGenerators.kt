@@ -13,8 +13,9 @@ import android.util.Log
 object KeyGenerators {
     private const val TAG = "KeyGenerators"
 
-    /** Registered generators, in priority order. Each is gated by a reference-vector test. */
-    private val generators: List<KeyGenerator> = listOf(ThomsonKeygen)
+    /** Registered generators, in priority order. ISP key-derivations (verified against reference
+     *  vectors) go first — they're likely THE key when they match; ESSID guesses run for everyone. */
+    private val generators: List<KeyGenerator> = listOf(ThomsonKeygen, EssidKeygen)
 
     /** Generated candidates for a capture (matching generators' output, 8..63 chars, de-duped). */
     fun candidatesFor(essid: String, bssid: String): List<String> {

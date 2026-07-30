@@ -82,4 +82,25 @@ class KeyGeneratorTest {
             assertEquals(10, it.length)
         }
     }
+
+    // ── EssidKeygen ──
+    @Test fun essidMatchesAnyNonBlankSsid() {
+        assertTrue(EssidKeygen.matches("MyHomeWifi", ""))
+        assertFalse(EssidKeygen.matches("", "aabbccddeeff"))
+    }
+
+    @Test fun essidDerivesNameVariants() {
+        val c = EssidKeygen.candidates("HomeNet", "")
+        assertTrue("plain name", c.contains("HomeNet"))
+        assertTrue("name+123", c.contains("HomeNet123"))
+        assertTrue("name+year", c.contains("HomeNet2024"))
+        assertTrue("no-space form", EssidKeygen.candidates("My Net", "").contains("MyNet123"))
+    }
+
+    @Test fun essidThroughRegistryIsLengthFiltered() {
+        // Short SSID "abc": "abc"(3) dropped, but "abc12345"(8) etc. kept — all results 8..63.
+        KeyGenerators.collect(listOf(EssidKeygen), "abc", "").forEach {
+            assertTrue("len ${it.length}: $it", it.length in 8..63)
+        }
+    }
 }
