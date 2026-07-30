@@ -67,6 +67,26 @@ With no generators registered, `ispCount == 0` and a crack behaves exactly as a 
 `ThomsonKeygen.kt` (+ its test in `KeyGeneratorTest`) is the worked example — copy its shape. Next
 highest-value family: **UPC/Ziggo** (messier algorithm, but highest local prevalence).
 
+### UPC/Ziggo — notes for the native port
+
+Scoped but **not yet implemented** — it needs native code, not a Kotlin loop:
+
+- **Algorithm:** Peter "blasty" Geissler's `upc_keys.c` (UPC UBEE EVW3226). From a `UPC%07d` SSID,
+  brute-force serials `SAAP%d%02d%d%04d`, MD5 → derive SSID (match) → mangle → second MD5 → 8-char
+  password (charset excludes `I`,`L`,`O`). Magic constants: `MAGIC_24GHZ=0xffd9da60`,
+  `MAGIC_5GHZ=0xff8d8f20`, `MAGIC0=0xb21642c9`, `MAGIC1=0x68de3af`, `MAGIC2=0x6b5fca6b`.
+- **Why native:** the serial space is `10×100×10×10000 = 100,000,000` — far too slow for Kotlin on a
+  phone. Port blasty's C into `wpa_crack.c` (add MD5 + a JNI entry `upcCandidates(essid)`), and have
+  a Kotlin `KeyGenerator` call it, self-checked like `NativeWpaCracker.verified`.
+- **Verify:** gate on a published `UPC…→password` vector before registering (blasty's own example
+  output, or [upcwifikeys.com](https://upcwifikeys.com/) / the deadcode.me writeup).
+- **Ziggo caveat:** blasty targets `UPC` SSIDs; `Ziggo…` is the same hardware but the SSID→serial
+  link is unconfirmed — don't claim Ziggo until there's a Ziggo vector.
+- **Get the exact source** (do NOT port from a summary — the mangle/charset steps must be exact):
+  [igi64/upc_keys](https://github.com/igi64/upc_keys/blob/master/upc_keys.c) ·
+  [spaze/upc_keys-lambda](https://github.com/spaze/upc_keys-lambda) ·
+  [yolosec/upcKeygen](https://github.com/yolosec/upcKeygen).
+
 1. Implement `KeyGenerator`:
    - `matches`: gate on the ESSID pattern and/or BSSID OUI (first 3 octets) the family uses.
    - `candidates`: derive the passphrases from `essid`/`bssid`. Port the algorithm from the GPL
