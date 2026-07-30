@@ -31,6 +31,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import kotlinx.coroutines.delay
 import com.wsvdmeer.pwncompanion.presentation.theme.TerminalBoxShape
+import com.wsvdmeer.pwncompanion.presentation.theme.TerminalMono
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material.icons.outlined.PhoneAndroid
@@ -571,6 +572,19 @@ fun MainContentArea(
                 })
                 ConsoleRule()
             }
+        }
+
+        // ── settings ─────────────────────────────────────────────
+        item {
+            Text(
+                "[ settings ]",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp, fontFamily = TerminalMono,
+                modifier = Modifier
+                    .clickable { mainViewModel.openDetail(com.wsvdmeer.pwncompanion.presentation.DetailScreen.SETTINGS) }
+                    .padding(vertical = 6.dp)
+            )
+            ConsoleRule()
         }
 
         // ── command bar ──────────────────────────────────────────

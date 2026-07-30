@@ -152,6 +152,7 @@ object NotificationHelper {
 
     /** A network's handshake was cracked — show the SSID + recovered password. */
     fun notifyCracked(context: Context, ssid: String, password: String) {
+        if (!NotifSettings.crackedEnabled(context)) return
         val net = ssid.ifBlank { "a network" }
         val n = NotificationCompat.Builder(context, ALERTS_CHANNEL)
             .setContentTitle("🔓 Cracked $net")
@@ -177,6 +178,7 @@ object NotificationHelper {
      * burst); [quality] tags it eapol/pmkid when known. Alerts channel, safe-posted, grouped.
      */
     fun notifyCaught(context: Context, label: String, quality: String?) {
+        if (!NotifSettings.catchEnabled(context)) return
         val net = label.ifBlank { "a network" }
         val sub = if (quality != null) "$net · $quality" else net
         val n = NotificationCompat.Builder(context, ALERTS_CHANNEL)

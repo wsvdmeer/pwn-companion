@@ -25,6 +25,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
+import com.wsvdmeer.pwncompanion.utils.NotifSettings
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
@@ -319,5 +322,63 @@ fun LearningDetailScreen(viewModel: MainViewModel, paddingValues: PaddingValues,
             }
             item { Spacer(Modifier.height(24.dp)) }
         }
+    }
+}
+
+/** Settings — notification toggles (extensible). Terminal-styled like the other detail screens. */
+@Composable
+fun SettingsScreen(paddingValues: PaddingValues, onBack: () -> Unit) {
+    BackHandler(onBack = onBack)
+    val context = LocalContext.current
+    LaunchedEffect(Unit) { NotifSettings.ensureLoaded(context) }
+    val onCatch by NotifSettings.onCatch.collectAsState()
+    val onCracked by NotifSettings.onCracked.collectAsState()
+    val primary = MaterialTheme.colorScheme.primary
+    val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    val onSurface = MaterialTheme.colorScheme.onSurface
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(paddingValues)
+            .padding(horizontal = 12.dp)
+    ) {
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text(
+                "[ BACK ]", color = primary, fontWeight = FontWeight.Bold, fontSize = 15.sp,
+                fontFamily = TerminalMono, modifier = Modifier.clickable { onBack() }
+            )
+            Text("[ SETTINGS ]", color = primary, fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = TerminalMono)
+        }
+        Spacer(Modifier.height(6.dp))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+        Spacer(Modifier.height(14.dp))
+
+        Text("notifications", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
+        Spacer(Modifier.height(4.dp))
+        SettingToggle("handshake caught  📡", onCatch, primary, dim, onSurface) { NotifSettings.setOnCatch(context, !onCatch) }
+        SettingToggle("password cracked  🔓", onCracked, primary, dim, onSurface) { NotifSettings.setOnCracked(context, !onCracked) }
+
+        Spacer(Modifier.height(12.dp))
+        Text(
+            "the persistent 'service running' notice can't be switched off here — Android requires it while a service runs. Mute its channel in Android's app-notification settings if you want it gone.",
+            color = dim, fontSize = 10.sp, fontFamily = TerminalMono, lineHeight = 14.sp
+        )
+    }
+}
+
+@Composable
+private fun SettingToggle(
+    label: String, on: Boolean, primary: Color, dim: Color, onSurface: Color, onToggle: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().clickable { onToggle() }.padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(if (on) "[x]" else "[ ]", color = if (on) primary else dim, fontSize = 14.sp, fontFamily = TerminalMono)
+        Spacer(Modifier.width(10.dp))
+        Text(label, color = onSurface, fontSize = 13.sp, fontFamily = TerminalMono, modifier = Modifier.weight(1f))
     }
 }
