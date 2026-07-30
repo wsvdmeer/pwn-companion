@@ -682,36 +682,11 @@ class NetworkService(private val context: Context) {
      * prefer the incoming record on collision, sort newest-first. Returns the
      * existing list unchanged when there's nothing new (avoids churn).
      */
+    // Capture merge + timestamp normalization live in the pure, unit-tested [CaptureMerge].
     private fun mergeCaptures(
         existing: List<com.wsvdmeer.pwncompanion.models.CaptureEntry>,
         incoming: List<com.wsvdmeer.pwncompanion.models.CaptureEntry>?,
-    ): List<com.wsvdmeer.pwncompanion.models.CaptureEntry> {
-        if (incoming.isNullOrEmpty()) return existing
-        val byKey = LinkedHashMap<String, com.wsvdmeer.pwncompanion.models.CaptureEntry>()
-        existing.forEach { byKey[it.key] = it.copy(timestamp = normalizeTs(it.timestamp)) }
-        // Incoming wins on collision, BUT carry forward a cracked password AND the 22000
-        // hash the fresh record lacks (a re-scan can omit either), so reconnects don't wipe them.
-        // Also normalize the timestamp to seconds — live geotagged captures arrive in ms (the
-        // phone's GPS clock) while scanned ones are in seconds, which mangled sort order + age.
-        incoming.forEach { inc0 ->
-            val inc = inc0.copy(timestamp = normalizeTs(inc0.timestamp))
-            val prev = byKey[inc.key]
-            byKey[inc.key] = if (prev != null && (inc.password == null && prev.password != null ||
-                                                  inc.hash22000 == null && prev.hash22000 != null))
-                inc.copy(password = inc.password ?: prev.password,
-                         hash22000 = inc.hash22000 ?: prev.hash22000)
-            else inc
-        }
-        return byKey.values.sortedByDescending { it.timestamp ?: 0L }
-    }
-
-    /** Coerce a capture timestamp to Unix **seconds**: values that look like milliseconds
-     * (> ~year 5138 in seconds) are divided by 1000. Fixes mixed ms/s units from the plugin. */
-    private fun normalizeTs(ts: Long?): Long? = when {
-        ts == null -> null
-        ts > 100_000_000_000L -> ts / 1000
-        else -> ts
-    }
+    ) = CaptureMerge.merge(existing, incoming)
 
     /** MAC → comparable form: lowercase hex, separators stripped. */
     private fun normMac(s: String): String =
