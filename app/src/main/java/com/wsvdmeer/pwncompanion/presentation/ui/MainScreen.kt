@@ -104,6 +104,11 @@ fun MainAppContent(viewModel: MainViewModel) {
                     paddingValues = paddingValues,
                     onBack = { viewModel.closeDetail() }
                 )
+            com.wsvdmeer.pwncompanion.presentation.DetailScreen.SETTINGS ->
+                SettingsScreen(
+                    paddingValues = paddingValues,
+                    onBack = { viewModel.closeDetail() }
+                )
             else -> MainContentArea(
                 paddingValues = paddingValues,
                 mainViewModel = viewModel,

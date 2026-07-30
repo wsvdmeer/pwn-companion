@@ -36,7 +36,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Full-screen detail views reachable from the console summaries (tap a section). */
-enum class DetailScreen { NONE, CAPTURES, LOG, LEARNING, STATS }
+enum class DetailScreen { NONE, CAPTURES, LOG, LEARNING, STATS, SETTINGS }
 
 /**
  * Main Activity ViewModel.
