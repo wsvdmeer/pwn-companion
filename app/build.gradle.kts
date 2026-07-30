@@ -78,6 +78,10 @@ android {
     lint {
         disable.add("ForegroundServiceType")
     }
+    testOptions {
+        // Let JVM unit tests call android.util.Log etc. without "not mocked" crashes.
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {

@@ -220,16 +220,21 @@ object CrackEngine {
         val quick = CrackSettings.quickCrack.value
         val mangle = CrackSettings.mangle.value
         val mult = if (mangle) MangleRules.size else 1
-        // Candidate space: quick uses only the top-N words; full uses all. Mangling expands each
-        // word into MangleRules.size variants, so the space (and the progress total that drives the
-        // ETA) is wordCount × mult.
+        // ISP default-key candidates (Ziggo/UPC/Thomson/…) derived from the ESSID/BSSID, tried BEFORE
+        // the wordlist so a matching router cracks in seconds. Empty unless a generator matches — with
+        // none registered, ispCount is 0 and the space is exactly the wordlist, as before.
+        val ispCandidates = KeyGenerators.candidatesFor(capture.ssid, bssid)
+        val ispCount = ispCandidates.size.toLong()
+        // Candidate space: quick uses only the top-N words; full uses all. Mangling expands each word
+        // into MangleRules.size variants. Total = ispCount + wordCount × mult (also drives the ETA).
         val wordCount = if (quick) minOf(QUICK_LIMIT, words.size.toLong()) else words.size.toLong()
-        val limit = wordCount * mult
+        val limit = ispCount + wordCount * mult
 
         // Resume (full only): the checkpoint is tagged with the wordlist + mangle factor, so toggling
         // mangle (which changes what each index means) invalidates a stale checkpoint instead of
         // resuming into the wrong candidate. One monotonic cursor → everything below is done.
-        val wordlistId = WordlistManager.identity() + if (mangle) "+m$mult" else ""
+        val wordlistId = WordlistManager.identity() +
+            (if (mangle) "+m$mult" else "") + (if (ispCount > 0) "+isp$ispCount" else "")
         val startIndex = if (quick) 0L else loadCheckpoint(context, key, wordlistId).coerceIn(0L, limit)
         val cursor = AtomicLong(startIndex)
         val tried = AtomicLong(startIndex)
@@ -238,17 +243,21 @@ object CrackEngine {
         val useNative = NativeWpaCracker.available &&
             (if (pmkidH != null) NativeWpaCracker.verified else NativeWpaCracker.eapolVerified)
         val inflight = BATCH.toLong() * cores
-        // Map a flat candidate index to its passphrase: word = idx / mult, rule = idx % mult.
-        // With mangle off, mult == 1 so this is just words[idx] — no per-candidate allocation cost.
+        // Map a flat candidate index to its passphrase. The first [ispCount] indices are the ISP
+        // default-key candidates (tried as-is, no mangling); beyond that it's the wordlist space —
+        // word = (idx-ispCount) / mult, rule = (idx-ispCount) % mult.
         fun candidateAt(idx: Long): String {
-            val w = words[(idx / mult).toInt()]
-            return if (mangle) MangleRules.apply(w, (idx % mult).toInt()) else w
+            if (idx < ispCount) return ispCandidates[idx.toInt()]
+            val w = idx - ispCount
+            val word = words[(w / mult).toInt()]
+            return if (mangle) MangleRules.apply(word, (w % mult).toInt()) else word
         }
         // Human-readable "what · how · which options" for the progress banner, e.g.
         // "eapol · native · mangle". quick/mangle are locked in for this run, so snapshot them here.
         val mode = buildString {
             append(if (pmkidH != null) "pmkid" else "eapol")
             append(" · ").append(if (useNative) "native" else "cpu")
+            if (ispCount > 0) append(" · isp")
             if (quick) append(" · quick")
             if (mangle) append(" · mangle")
         }
