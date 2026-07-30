@@ -1160,8 +1160,8 @@ private fun ConsoleCommandBar(
             // Mode toggle — only meaningful while a pwnagotchi is actually LINKED (not merely
             // while the server is listening), since it sends restart_auto/manual to the device.
             if (deviceConnected) {
-                if (isAutoMode) CmdAction("go manual", MaterialTheme.colorScheme.tertiary, onManual)
-                else CmdAction("go auto", MaterialTheme.colorScheme.primary, onAuto)
+                if (isAutoMode) CmdAction("go manual", MaterialTheme.colorScheme.tertiary, Modifier.weight(1f), onManual)
+                else CmdAction("go auto", MaterialTheme.colorScheme.primary, Modifier.weight(1f), onAuto)
             }
             // Service toggle — three states so a "start" tap is never a silent no-op:
             //   running               → stop service
@@ -1169,19 +1169,19 @@ private fun ConsoleCommandBar(
             //   fully off              → start service
             when {
                 isServerRunning ->
-                    CmdAction("stop service", MaterialTheme.colorScheme.error, onToggleService)
+                    CmdAction("stop service", MaterialTheme.colorScheme.error, Modifier.weight(1f), onToggleService)
                 networkingArmed ->
-                    CmdAction("waiting for link — cancel", MaterialTheme.colorScheme.tertiary, onToggleService)
+                    CmdAction("waiting for link — cancel", MaterialTheme.colorScheme.tertiary, Modifier.weight(1f), onToggleService)
                 else ->
-                    CmdAction("start service", MaterialTheme.colorScheme.primary, onToggleService)
+                    CmdAction("start service", MaterialTheme.colorScheme.primary, Modifier.weight(1f), onToggleService)
             }
         }
         // Device power — reboot / shutdown the Pi. Only while linked; two taps to confirm (a
         // shutdown means the Pi won't come back without a physical power-cycle).
         if (deviceConnected) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                ConfirmCmdAction("reboot pi", MaterialTheme.colorScheme.tertiary, onReboot)
-                ConfirmCmdAction("shutdown pi", MaterialTheme.colorScheme.error, onShutdown)
+                ConfirmCmdAction("reboot pi", MaterialTheme.colorScheme.tertiary, Modifier.weight(1f), onReboot)
+                ConfirmCmdAction("shutdown pi", MaterialTheme.colorScheme.error, Modifier.weight(1f), onShutdown)
             }
         }
     }
@@ -1189,25 +1189,29 @@ private fun ConsoleCommandBar(
 
 /** A [CmdAction] that needs two taps: the first arms it ("confirm …?"), the second fires. */
 @Composable
-private fun ConfirmCmdAction(label: String, color: Color, onConfirm: () -> Unit) {
+private fun ConfirmCmdAction(label: String, color: Color, modifier: Modifier = Modifier, onConfirm: () -> Unit) {
     var armed by remember { mutableStateOf(false) }
     CmdAction(
         if (armed) "confirm $label?" else label,
         if (armed) MaterialTheme.colorScheme.error else color,
+        modifier,
     ) {
         if (armed) { onConfirm(); armed = false } else armed = true
     }
 }
 
-/** A real, clearly-tappable terminal button: bordered, padded, with a ripple. */
+/** A real, clearly-tappable terminal button: bordered, padded, ripple. Pass Modifier.weight(1f)
+ *  in a Row to make buttons share the width equally (aligned halves) instead of wrap-content. */
 @Composable
-private fun CmdAction(label: String, color: Color, onClick: () -> Unit) {
+private fun CmdAction(label: String, color: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Text(
         "[ $label ]",
         color = color,
         fontSize = 13.sp,
         fontWeight = FontWeight.Bold,
-        modifier = Modifier
+        textAlign = TextAlign.Center,
+        maxLines = 1,
+        modifier = modifier
             .clip(TerminalBoxShape)
             .clickable { onClick() }
             .border(1.dp, color.copy(alpha = 0.5f), TerminalBoxShape)
