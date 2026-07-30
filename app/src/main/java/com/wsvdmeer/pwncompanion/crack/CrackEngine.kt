@@ -261,13 +261,12 @@ object CrackEngine {
         val mode = buildString {
             append(if (pmkidH != null) "pmkid" else "eapol")
             append(" · ").append(if (useNative) "native" else "cpu")
-            if (ispCount > 0) append(" · isp")
             if (quick) append(" · quick")
             if (mangle) append(" · mangle")
         }
-        // Which segment the cursor is in right now: the first ispCount candidates are ISP default
-        // keys, the rest is the wordlist. (No ISP generators → always "wordlist".)
-        fun phaseAt(n: Long): String = if (n < ispCount) "isp keys" else "wordlist"
+        // Which segment the cursor is in right now: the first ispCount candidates are the targeted
+        // guesses (ISP default keys + ESSID variants), the rest is the wordlist.
+        fun phaseAt(n: Long): String = if (n < ispCount) "targeted" else "wordlist"
         _state.value = CrackState.Running(bssid, ssid, startIndex, limit, 0, mode, phaseAt(startIndex))
         if (!quick && startIndex > 0) Log.i(TAG, "resuming $ssid from $startIndex/$limit")
         Log.i(TAG, "cracking $ssid: ${if (quick) "quick" else "full"}, $cores workers, " +
