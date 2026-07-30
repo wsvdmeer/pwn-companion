@@ -16,6 +16,7 @@ import com.wsvdmeer.pwncompanion.models.LearningStats
 import com.wsvdmeer.pwncompanion.models.PersonalityState
 import com.wsvdmeer.pwncompanion.models.Strategy
 import com.wsvdmeer.pwncompanion.storage.CaptureStore
+import com.wsvdmeer.pwncompanion.utils.NotificationHelper
 import com.wsvdmeer.pwncompanion.protocol.MessageHandler
 import com.wsvdmeer.pwncompanion.protocol.OutgoingMessageQueue
 import com.wsvdmeer.pwncompanion.services.CompanionBackgroundService
@@ -195,6 +196,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val cached = withContext(Dispatchers.IO) { CaptureStore.load(getApplication()) }
             if (_captures.value.isEmpty()) _captures.value = cached
         }
+    }
+
+    // New-catch alerts: prime on the first emit (the synced backlog), then notify only on genuinely
+    // fresh crackable captures — a new key with a recent timestamp — so a reconnect's whole history
+    // doesn't spam notifications.
+    private var knownCaptureKeys: Set<String> = emptySet()
+    private var captureNotifPrimed = false
+
+    private fun notifyFreshCatches(all: List<CaptureEntry>) {
+        val keys = all.mapTo(HashSet()) { it.key }
+        if (captureNotifPrimed) {
+            val nowS = System.currentTimeMillis() / 1000
+            val fresh = all.filter {
+                it.key !in knownCaptureKeys && it.isCrackable && (it.timestamp ?: 0L) > nowS - 600
+            }
+            when {
+                fresh.size == 1 -> NotificationHelper.notifyCaught(getApplication(), fresh[0].ssid, fresh[0].quality)
+                fresh.size > 1 -> NotificationHelper.notifyCaught(getApplication(), "${fresh.size} networks", null)
+            }
+        }
+        knownCaptureKeys = keys
+        captureNotifPrimed = true
     }
 
     /** Queue a capture for on-phone cracking (starts the engine if idle). */
@@ -664,6 +687,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (allCaptures.size > _captures.value.size) {
                     appendLog("[*] captures :: ${allCaptures.size} logged")
                 }
+                notifyFreshCatches(allCaptures)
                 _captures.value = allCaptures
                 // Phase 1 (on-phone cracking): confirm 22000 hashes are arriving from the plugin.
                 val withHash = allCaptures.count { !it.hash22000.isNullOrBlank() }

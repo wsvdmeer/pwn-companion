@@ -41,6 +41,7 @@ object NotificationHelper {
     const val NOTIFICATION_ID_CRACK    = 1003
     private const val NOTIFICATION_ID_ALERTS_SUMMARY = 1004
     private const val CRACKED_ID_BASE  = 2_000_000
+    private const val CAUGHT_ID_BASE   = 3_000_000
 
     // Group key: all alert notifications share it so Android bundles them under one
     // expandable "PwnCompanion" header in the shade instead of showing loose cards.
@@ -167,6 +168,30 @@ object NotificationHelper {
         // Stable per (network,password) so a re-seen crack replaces rather than dupes,
         // while different cracks stack under the group.
         val id = CRACKED_ID_BASE + ("$net:$password".hashCode() and 0xFFFF)
+        postSafely(context, id, n)
+        postAlertsSummary(context)
+    }
+
+    /**
+     * Fire an alert when a fresh handshake is caught. [label] is the SSID (or "N networks" for a
+     * burst); [quality] tags it eapol/pmkid when known. Alerts channel, safe-posted, grouped.
+     */
+    fun notifyCaught(context: Context, label: String, quality: String?) {
+        val net = label.ifBlank { "a network" }
+        val sub = if (quality != null) "$net · $quality" else net
+        val n = NotificationCompat.Builder(context, ALERTS_CHANNEL)
+            .setContentTitle("📡 Caught $net")
+            .setContentText(if (quality != null) "handshake · $quality" else "handshake captured")
+            .setStyle(NotificationCompat.BigTextStyle().bigText("handshake captured\n$sub"))
+            .setSmallIcon(com.wsvdmeer.pwncompanion.R.drawable.ic_stat_pwn)
+            .setColor(ContextCompat.getColor(context, R.color.phosphor_green))
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setGroup(GROUP_ALERTS)
+            .setContentIntent(mainActivityIntent(context))
+            .build()
+        val id = CAUGHT_ID_BASE + (net.hashCode() and 0xFFFF)
         postSafely(context, id, n)
         postAlertsSummary(context)
     }
