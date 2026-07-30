@@ -5,6 +5,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -106,6 +108,7 @@ fun CapturesDetailScreen(
     var showOptions by remember { mutableStateOf(false) }
     var showManage by remember { mutableStateOf(false) }
     var detailCapture by remember { mutableStateOf<CaptureEntry?>(null) }
+    var clusterCaptures by remember { mutableStateOf<List<CaptureEntry>?>(null) }
 
     // Gentle-knob power settings for cracking (persisted; also read by CrackEngine).
     val context = LocalContext.current
@@ -232,7 +235,10 @@ fun CapturesDetailScreen(
                     PixelBasemap(
                         points = captures.filter { it.isGeolocated },
                         current = gps?.takeIf { it.isValid() },
-                        onCaptureTap = { detailCapture = it },
+                        onCatch = { caps ->
+                            if (caps.size == 1) detailCapture = caps.first()
+                            else clusterCaptures = caps   // several here → let the user pick
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
                             .border(1.dp, MaterialTheme.colorScheme.outline)
@@ -350,6 +356,14 @@ fun CapturesDetailScreen(
             onClearPhone = { viewModel.clearPhoneCaptures(); showManage = false },
             onWipeDevice = { viewModel.wipeDeviceCaptures(); showManage = false },
             onDismiss = { showManage = false },
+        )
+    }
+
+    clusterCaptures?.let { caps ->
+        ClusterPickerSheet(
+            captures = caps,
+            onPick = { clusterCaptures = null; detailCapture = it },
+            onDismiss = { clusterCaptures = null },
         )
     }
 
@@ -581,6 +595,50 @@ private fun ManageCapturesSheet(
 
             Spacer(Modifier.height(18.dp))
             SheetButton("[ close ]", dim, onDismiss)
+        }
+    }
+}
+
+/** Picker shown when a tapped map cell holds several captures — choose which to open. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ClusterPickerSheet(
+    captures: List<CaptureEntry>,
+    onPick: (CaptureEntry) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color(0xFF02060A), contentColor = primary) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 28.dp)
+        ) {
+            Text("[ ${captures.size} HERE ]", color = primary, fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = TerminalMono)
+            Spacer(Modifier.height(4.dp))
+            Text("several captures at this spot — pick one", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
+            Spacer(Modifier.height(10.dp))
+            Column(Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState())) {
+                captures.forEach { c ->
+                    Row(
+                        Modifier.fillMaxWidth().clickable { onPick(c) }.padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                c.ssid.ifBlank { c.bssid.ifBlank { "(hidden)" } },
+                                color = onSurface, fontSize = 13.sp, fontFamily = TerminalMono, maxLines = 1
+                            )
+                            Text(
+                                if (c.isCracked) "cracked" else (c.quality ?: "unknown"),
+                                color = if (c.isCracked) Color(0xFF3DFF6E) else dim,
+                                fontSize = 10.sp, fontFamily = TerminalMono
+                            )
+                        }
+                        Text("▸", color = primary, fontSize = 13.sp, fontFamily = TerminalMono)
+                    }
+                }
+            }
         }
     }
 }
@@ -971,7 +1029,7 @@ private fun etaLocal(tried: Long, total: Long, perSec: Long): String {
 private fun PixelBasemap(
     points: List<CaptureEntry>,
     current: GpsData?,
-    onCaptureTap: (CaptureEntry) -> Unit = {},
+    onCatch: (List<CaptureEntry>) -> Unit = {},   // all captures in the tapped cell
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -1071,21 +1129,24 @@ private fun PixelBasemap(
                                 detectTapGestures(
                                     onDoubleTap = { scale = 1f; offset = Offset.Zero },
                                     onTap = { pos ->
-                                        // Invert the same transform the draw pass uses, then find the
-                                        // closest catch cell to the tap and open it if it's near enough.
+                                        // Invert the same transform the draw pass uses, find the closest
+                                        // catch cell, and hand back all captures in it (the caller opens
+                                        // one directly or shows a picker when the cell holds several).
                                         val cwt0 = floor(min(size.width.toFloat() / g.cols, size.height.toFloat() / g.rows)).coerceAtLeast(1f)
                                         val cwt = cwt0 * scale
                                         val oxt = (size.width - cwt * g.cols) / 2f + offset.x
                                         val oyt = (size.height - cwt * g.rows) / 2f + offset.y
-                                        var best: CaptureEntry? = null
+                                        var bestCell = -1
                                         var bestD = Float.MAX_VALUE
-                                        for ((cell, cap) in g.catchByCell) {
+                                        for (cell in g.catchByCell.keys) {
                                             val cx = oxt + (cell % g.cols + 0.5f) * cwt
                                             val cy = oyt + (cell / g.cols + 0.5f) * cwt
                                             val d = hypot(pos.x - cx, pos.y - cy)
-                                            if (d < bestD) { bestD = d; best = cap }
+                                            if (d < bestD) { bestD = d; bestCell = cell }
                                         }
-                                        best?.let { if (bestD <= maxOf(cwt * 1.5f, 48f)) onCaptureTap(it) }
+                                        if (bestCell >= 0 && bestD <= maxOf(cwt * 1.5f, 48f)) {
+                                            g.catchByCell[bestCell]?.let { onCatch(it) }
+                                        }
                                     },
                                 )
                             }
@@ -1138,7 +1199,7 @@ private class MapGrid(
     val rows: Int,
     val grey: IntArray,          // per cell (row*cols+col): -1 = empty, else grey 0..255
     val catchCells: List<Int>,
-    val catchByCell: Map<Int, CaptureEntry>,   // cell → a capture there (tap-to-open)
+    val catchByCell: Map<Int, List<CaptureEntry>>,   // cell → all captures there (tap-to-open)
 )
 
 /**
@@ -1182,9 +1243,11 @@ private fun buildMapGrid(tiles: MapTiles, geo: List<CaptureEntry>): MapGrid {
         return r * cols + c
     }
     val catchCells = geo.mapNotNull { cellIndex(it.latitude!!, it.longitude!!) }
-    // cell → a representative capture there, for tap-to-open (first capture wins per cell).
-    val catchByCell = HashMap<Int, CaptureEntry>()
-    geo.forEach { c -> cellIndex(c.latitude!!, c.longitude!!)?.let { catchByCell.putIfAbsent(it, c) } }
+    // cell → all captures there (a coarse cell can hold several), for tap-to-open / cluster picker.
+    val catchByCell = HashMap<Int, MutableList<CaptureEntry>>()
+    geo.forEach { c ->
+        cellIndex(c.latitude!!, c.longitude!!)?.let { catchByCell.getOrPut(it) { mutableListOf() }.add(c) }
+    }
 
     small.recycle()
     return MapGrid(cols, rows, grey, catchCells, catchByCell)
