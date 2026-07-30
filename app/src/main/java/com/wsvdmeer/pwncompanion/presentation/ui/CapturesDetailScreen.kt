@@ -76,6 +76,7 @@ import kotlinx.coroutines.withContext
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.floor
+import kotlin.math.hypot
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -231,6 +232,7 @@ fun CapturesDetailScreen(
                     PixelBasemap(
                         points = captures.filter { it.isGeolocated },
                         current = gps?.takeIf { it.isValid() },
+                        onCaptureTap = { detailCapture = it },
                         modifier = Modifier
                             .fillMaxWidth()
                             .border(1.dp, MaterialTheme.colorScheme.outline)
@@ -966,7 +968,12 @@ private fun etaLocal(tried: Long, total: Long, perSec: Long): String {
  * map. Loading + recolor run off the main thread.
  */
 @Composable
-private fun PixelBasemap(points: List<CaptureEntry>, current: GpsData?, modifier: Modifier = Modifier) {
+private fun PixelBasemap(
+    points: List<CaptureEntry>,
+    current: GpsData?,
+    onCaptureTap: (CaptureEntry) -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     val geo = remember(points) { points.filter { it.latitude != null && it.longitude != null } }
@@ -1059,9 +1066,28 @@ private fun PixelBasemap(points: List<CaptureEntry>, current: GpsData?, modifier
                                     offset = clampOffset(offset + pan, ns)
                                 }
                             }
-                            // Double-tap to reset to the full fit-all view.
+                            // Single-tap → open the nearest catch's detail; double-tap → reset view.
                             .pointerInput(g) {
-                                detectTapGestures(onDoubleTap = { scale = 1f; offset = Offset.Zero })
+                                detectTapGestures(
+                                    onDoubleTap = { scale = 1f; offset = Offset.Zero },
+                                    onTap = { pos ->
+                                        // Invert the same transform the draw pass uses, then find the
+                                        // closest catch cell to the tap and open it if it's near enough.
+                                        val cwt0 = floor(min(size.width.toFloat() / g.cols, size.height.toFloat() / g.rows)).coerceAtLeast(1f)
+                                        val cwt = cwt0 * scale
+                                        val oxt = (size.width - cwt * g.cols) / 2f + offset.x
+                                        val oyt = (size.height - cwt * g.rows) / 2f + offset.y
+                                        var best: CaptureEntry? = null
+                                        var bestD = Float.MAX_VALUE
+                                        for ((cell, cap) in g.catchByCell) {
+                                            val cx = oxt + (cell % g.cols + 0.5f) * cwt
+                                            val cy = oyt + (cell / g.cols + 0.5f) * cwt
+                                            val d = hypot(pos.x - cx, pos.y - cy)
+                                            if (d < bestD) { bestD = d; best = cap }
+                                        }
+                                        best?.let { if (bestD <= maxOf(cwt * 1.5f, 48f)) onCaptureTap(it) }
+                                    },
+                                )
                             }
                     ) {
                         drawRect(Color(0xFF02060A), size = size)     // console ink background
@@ -1095,7 +1121,7 @@ private fun PixelBasemap(points: List<CaptureEntry>, current: GpsData?, modifier
                 }
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    "pinch to zoom · drag to pan · double-tap to reset",
+                    "tap a catch to open · pinch to zoom · drag to pan · double-tap to reset",
                     color = dim.copy(alpha = 0.6f), fontSize = 9.sp, fontFamily = TerminalMono
                 )
             }
@@ -1112,6 +1138,7 @@ private class MapGrid(
     val rows: Int,
     val grey: IntArray,          // per cell (row*cols+col): -1 = empty, else grey 0..255
     val catchCells: List<Int>,
+    val catchByCell: Map<Int, CaptureEntry>,   // cell → a capture there (tap-to-open)
 )
 
 /**
@@ -1155,9 +1182,12 @@ private fun buildMapGrid(tiles: MapTiles, geo: List<CaptureEntry>): MapGrid {
         return r * cols + c
     }
     val catchCells = geo.mapNotNull { cellIndex(it.latitude!!, it.longitude!!) }
+    // cell → a representative capture there, for tap-to-open (first capture wins per cell).
+    val catchByCell = HashMap<Int, CaptureEntry>()
+    geo.forEach { c -> cellIndex(c.latitude!!, c.longitude!!)?.let { catchByCell.putIfAbsent(it, c) } }
 
     small.recycle()
-    return MapGrid(cols, rows, grey, catchCells)
+    return MapGrid(cols, rows, grey, catchCells, catchByCell)
 }
 
 /**
