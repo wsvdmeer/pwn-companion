@@ -1,7 +1,8 @@
 # ISP default-key generators — design note
 
-Status: **framework landed (step 1), no generators yet.** This is the scoping + how-to for the
-roadmap's highest-hit-rate cracking feature. Read it before picking the work back up.
+Status: **framework + first generator landed.** Step 1 (framework) and step 2's first generator
+(**Thomson/SpeedTouch**, `ThomsonKeygen.kt`, reference-vector verified) are in. This is the scoping
++ how-to for extending it (more router families) — the highest-hit-rate cracking feature.
 
 > Scope reminder: PwnCompanion is for **authorized** Wi-Fi security research on networks you own or
 > have explicit permission to test. Default-key generators just move candidates the operator could
@@ -62,6 +63,9 @@ Step 1 is implemented and inert:
 With no generators registered, `ispCount == 0` and a crack behaves exactly as a plain wordlist run.
 
 ## How to add a generator (step 2)
+
+`ThomsonKeygen.kt` (+ its test in `KeyGeneratorTest`) is the worked example — copy its shape. Next
+highest-value family: **UPC/Ziggo** (messier algorithm, but highest local prevalence).
 
 1. Implement `KeyGenerator`:
    - `matches`: gate on the ESSID pattern and/or BSSID OUI (first 3 octets) the family uses.
