@@ -447,10 +447,15 @@ private fun CaptureDetailSheet(
                 Text("wordlist", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
                 Spacer(Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // quick: try only the top-N of the wordlist. mangle: expand each word into variants.
                     FilterChip("quick", quick, primary, dim) { CrackSettings.setQuickCrack(ctx, !quick) }
                     FilterChip("mangle", mangle, primary, dim) { CrackSettings.setMangle(ctx, !mangle) }
                 }
+                Spacer(Modifier.height(5.dp))
+                Text(
+                    "quick — try only the top ~25k words (fast, may miss).\n" +
+                        "mangle — also try variants of each: Word1 · Word123! · Word2024 · Caps · l33t (wider, slower).",
+                    color = dim, fontSize = 10.sp, fontFamily = TerminalMono, lineHeight = 14.sp
+                )
             }
 
             Spacer(Modifier.height(16.dp))
@@ -641,6 +646,13 @@ private fun CrackPowerSheet(
                 FilterChip("charger only", chargerOnly, primary, dim, onCharger)
                 FilterChip("stop <15%", lowBatteryStop, primary, dim, onLowBatt)
             }
+            Spacer(Modifier.height(5.dp))
+            Text(
+                "easy cpu — cap at 2 cores (cooler, slower).\n" +
+                    "charger only — crack only while plugged in.\n" +
+                    "stop <15% — pause on low battery (unplugged).",
+                color = dim, fontSize = 10.sp, fontFamily = TerminalMono, lineHeight = 14.sp
+            )
         }
     }
 }
