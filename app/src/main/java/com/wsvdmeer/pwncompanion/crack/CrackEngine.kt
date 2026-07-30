@@ -456,8 +456,17 @@ object CrackEngine {
 
     private fun startService(context: Context) {
         val intent = Intent(context, CrackService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent)
-        else context.startService(intent)
+        // The crack itself runs in `scope`, independent of this service — the service only lets it
+        // survive lock/backgrounding. Starting a foreground service can be refused by the OS
+        // (ForegroundServiceStartNotAllowedException on Android 12+), most often when no other FGS
+        // is already running — e.g. cracking an offline capture with no Pi link. Swallow it and crack
+        // anyway (best-effort: works while the app is open) instead of crashing.
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent)
+            else context.startService(intent)
+        } catch (e: Exception) {
+            Log.w(TAG, "crack foreground service start refused: ${e.message}")
+        }
     }
 
     private fun stopService(context: Context) {
