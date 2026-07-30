@@ -829,8 +829,10 @@ private fun CrackBanner(
                     )
                     Spacer(Modifier.height(2.dp))
                 }
+                // Lead the progress line with the segment being tried right now (isp keys → wordlist).
+                val phasePrefix = if (state.phase.isNotEmpty()) "${state.phase} · " else ""
                 Text(
-                    "${state.tried} / ${state.total} (${(frac * 100).roundToInt()}%) · ${state.perSec}/s · eta $eta",
+                    "$phasePrefix${state.tried} / ${state.total} (${(frac * 100).roundToInt()}%) · ${state.perSec}/s · eta $eta",
                     color = dim, fontSize = 11.sp, fontFamily = TerminalMono
                 )
                 Spacer(Modifier.height(5.dp))
