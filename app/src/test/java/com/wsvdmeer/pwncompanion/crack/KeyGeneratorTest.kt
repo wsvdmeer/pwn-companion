@@ -1,6 +1,7 @@
 package com.wsvdmeer.pwncompanion.crack
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -55,5 +56,30 @@ class KeyGeneratorTest {
         val a = gen("a", true, listOf("aaaaaaaa"))
         val b = gen("b", true, listOf("bbbbbbbb"))
         assertEquals(listOf("aaaaaaaa", "bbbbbbbb"), KeyGenerators.collect(listOf(a, b), "UPC1", "x"))
+    }
+
+    // ── ThomsonKeygen — reference vector ──
+    // Canonical public vector (Kevin Devine / GNUCitizen 2008): serial CP0615…109 → SHA-1
+    // 742da831d2… → SSID "SpeedTouchF8A3D0", WPA key "742DA831D2". If the serial→SHA-1→key
+    // derivation is right, cracking SSID SpeedTouchF8A3D0 must surface 742DA831D2. This gates
+    // registering the generator — a wrong port fails here instead of injecting garbage candidates.
+    @Test fun thomsonReproducesReferenceKey() {
+        val cands = ThomsonKeygen.candidates("SpeedTouchF8A3D0", "")
+        assertTrue("expected 742DA831D2 among $cands", cands.contains("742DA831D2"))
+    }
+
+    @Test fun thomsonMatchesOnlyItsOwnSsids() {
+        assertTrue(ThomsonKeygen.matches("SpeedTouchF8A3D0", ""))
+        assertTrue(ThomsonKeygen.matches("ThomsonABCDEF", ""))
+        assertFalse(ThomsonKeygen.matches("UPC1234567", ""))          // other family
+        assertFalse(ThomsonKeygen.matches("SpeedTouchZZZZZZ", ""))    // suffix not hex
+        assertFalse(ThomsonKeygen.matches("SpeedTouch", ""))          // no suffix
+    }
+
+    @Test fun thomsonEmitsWpaValidCandidates() {
+        // Every candidate is a 10-char uppercase-hex key (a valid WPA passphrase length).
+        ThomsonKeygen.candidates("SpeedTouchF8A3D0", "").forEach {
+            assertEquals(10, it.length)
+        }
     }
 }
