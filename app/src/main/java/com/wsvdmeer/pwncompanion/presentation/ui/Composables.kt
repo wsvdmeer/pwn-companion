@@ -602,7 +602,9 @@ fun MainContentArea(
                     // fully-off service is (re)started.
                     if (isServerRunning || networkingArmed) mainViewModel.stopServer()
                     else mainViewModel.startServer()
-                }
+                },
+                onReboot = { mainViewModel.sendPwnagotchiCommand("reboot") },
+                onShutdown = { mainViewModel.sendPwnagotchiCommand("shutdown") },
             )
             if (errorMessage != null) {
                 Spacer(modifier = Modifier.height(10.dp))
@@ -1150,26 +1152,50 @@ private fun ConsoleCommandBar(
     onAuto: () -> Unit,
     onManual: () -> Unit,
     onToggleService: () -> Unit,
+    onReboot: () -> Unit = {},
+    onShutdown: () -> Unit = {},
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        // Mode toggle — only meaningful while a pwnagotchi is actually LINKED (not merely
-        // while the server is listening), since it sends restart_auto/manual to the device.
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            // Mode toggle — only meaningful while a pwnagotchi is actually LINKED (not merely
+            // while the server is listening), since it sends restart_auto/manual to the device.
+            if (deviceConnected) {
+                if (isAutoMode) CmdAction("go manual", MaterialTheme.colorScheme.tertiary, onManual)
+                else CmdAction("go auto", MaterialTheme.colorScheme.primary, onAuto)
+            }
+            // Service toggle — three states so a "start" tap is never a silent no-op:
+            //   running               → stop service
+            //   armed but not bound    → waiting for the Bluetooth link (tap cancels/disarms)
+            //   fully off              → start service
+            when {
+                isServerRunning ->
+                    CmdAction("stop service", MaterialTheme.colorScheme.error, onToggleService)
+                networkingArmed ->
+                    CmdAction("waiting for link — cancel", MaterialTheme.colorScheme.tertiary, onToggleService)
+                else ->
+                    CmdAction("start service", MaterialTheme.colorScheme.primary, onToggleService)
+            }
+        }
+        // Device power — reboot / shutdown the Pi. Only while linked; two taps to confirm (a
+        // shutdown means the Pi won't come back without a physical power-cycle).
         if (deviceConnected) {
-            if (isAutoMode) CmdAction("go manual", MaterialTheme.colorScheme.tertiary, onManual)
-            else CmdAction("go auto", MaterialTheme.colorScheme.primary, onAuto)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ConfirmCmdAction("reboot pi", MaterialTheme.colorScheme.tertiary, onReboot)
+                ConfirmCmdAction("shutdown pi", MaterialTheme.colorScheme.error, onShutdown)
+            }
         }
-        // Service toggle — three states so a "start" tap is never a silent no-op:
-        //   running               → stop service
-        //   armed but not bound    → waiting for the Bluetooth link (tap cancels/disarms)
-        //   fully off              → start service
-        when {
-            isServerRunning ->
-                CmdAction("stop service", MaterialTheme.colorScheme.error, onToggleService)
-            networkingArmed ->
-                CmdAction("waiting for link — cancel", MaterialTheme.colorScheme.tertiary, onToggleService)
-            else ->
-                CmdAction("start service", MaterialTheme.colorScheme.primary, onToggleService)
-        }
+    }
+}
+
+/** A [CmdAction] that needs two taps: the first arms it ("confirm …?"), the second fires. */
+@Composable
+private fun ConfirmCmdAction(label: String, color: Color, onConfirm: () -> Unit) {
+    var armed by remember { mutableStateOf(false) }
+    CmdAction(
+        if (armed) "confirm $label?" else label,
+        if (armed) MaterialTheme.colorScheme.error else color,
+    ) {
+        if (armed) { onConfirm(); armed = false } else armed = true
     }
 }
 
