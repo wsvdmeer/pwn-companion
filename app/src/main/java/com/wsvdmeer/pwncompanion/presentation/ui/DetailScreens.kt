@@ -358,14 +358,8 @@ fun SettingsScreen(paddingValues: PaddingValues, onBack: () -> Unit) {
 
         Text("notifications", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
         Spacer(Modifier.height(4.dp))
-        SettingToggle("handshake caught  📡", onCatch, primary, dim, onSurface) { NotifSettings.setOnCatch(context, !onCatch) }
-        SettingToggle("password cracked  🔓", onCracked, primary, dim, onSurface) { NotifSettings.setOnCracked(context, !onCracked) }
-
-        Spacer(Modifier.height(12.dp))
-        Text(
-            "the persistent 'service running' notice can't be switched off here — Android requires it while a service runs. Mute its channel in Android's app-notification settings if you want it gone.",
-            color = dim, fontSize = 10.sp, fontFamily = TerminalMono, lineHeight = 14.sp
-        )
+        SettingToggle("handshake caught", onCatch, primary, dim, onSurface) { NotifSettings.setOnCatch(context, !onCatch) }
+        SettingToggle("password cracked", onCracked, primary, dim, onSurface) { NotifSettings.setOnCracked(context, !onCracked) }
     }
 }
 
