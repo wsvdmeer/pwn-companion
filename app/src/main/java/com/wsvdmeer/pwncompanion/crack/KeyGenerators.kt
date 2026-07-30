@@ -13,8 +13,8 @@ import android.util.Log
 object KeyGenerators {
     private const val TAG = "KeyGenerators"
 
-    /** Registered generators, in priority order. None yet — this is the framework they slot into. */
-    private val generators: List<KeyGenerator> = emptyList()
+    /** Registered generators, in priority order. Each is gated by a reference-vector test. */
+    private val generators: List<KeyGenerator> = listOf(ThomsonKeygen)
 
     /** Generated candidates for a capture (matching generators' output, 8..63 chars, de-duped). */
     fun candidatesFor(essid: String, bssid: String): List<String> {
