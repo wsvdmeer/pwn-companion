@@ -1,11 +1,11 @@
 # ISP default-key generators — design note
 
-Status: **framework on `main` (inert); generators on `feature/isp-keygen`.** The `KeyGenerator`
-interface + registry + crack wiring stay on main but the registry is **empty** (no generators run
-by default — deprioritized in favour of GPU-offload cracking). The working generators
-(**Thomson/SpeedTouch**, reference-vector verified, + **ESSID**) and their tests live on the
-`feature/isp-keygen` branch. Re-register them in `KeyGenerators.generators` to switch back on.
-This is the scoping + how-to for extending it (more router families).
+Status: **Thomson/SpeedTouch + ESSID active on `main`; UPC/Ziggo deferred (native port).** The
+`KeyGenerator` interface + registry + crack wiring are live, with `ThomsonKeygen` (reference-vector
+verified) and `EssidKeygen` registered in `KeyGenerators.generators` — their candidates are tried
+before the wordlist (the "targeted" phase). **UPC/Ziggo** still needs the native-scale MD5 port (see
+the notes below) and stays scoped on the `feature/isp-keygen` branch. This is the scoping + how-to
+for extending it to more router families.
 
 > Scope reminder: PwnCompanion is for **authorized** Wi-Fi security research on networks you own or
 > have explicit permission to test. Default-key generators just move candidates the operator could
