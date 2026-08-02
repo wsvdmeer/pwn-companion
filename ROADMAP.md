@@ -12,9 +12,6 @@ The current focus, in no strict order:
   ~100M-iteration MD5 serial brute-force — native-scale, so it needs a JNI port into `wpa_crack.c`
   (add MD5 + a `upcCandidates(essid)` entry), gated on a published `UPC…→key` vector like the rest.
   Scoped on the `feature/isp-keygen` branch; the biggest remaining hit-rate win.
-- **Faster cracking — multi-lane SIMD** — hash several candidates in parallel across NEON lanes
-  (4–8-way PBKDF2) on top of the ARMv8 hardware SHA-1 already in use. A large speed multiplier,
-  now especially worthwhile since EAPOL (heavier per candidate) is in play.
 - **More tests** — the capture merge/normalize, HuntAdvisor, and CrackEngine queue/resume are
   untested and have regressed before (timestamp units, connect-race capture drop, advisor/bandit
   divergence). A safety net for the parts that keep breaking.
@@ -32,6 +29,13 @@ The current focus, in no strict order:
   is faster.
 - **"Deauth this AP" button** — let the operator target a specific untapped AP on demand, not just
   steer recon. High impact for the deauth mission; must stay behind the authorized-use guardrails.
+- **Multi-lane SIMD cracking (low priority — probably not worth it)** — 4–8-way NEON SHA-1 to hash
+  several candidates per pass. Deprioritized: we already use the ARMv8 SHA-1 **crypto extension**, and
+  a single-lane hardware hash typically matches or beats 4-way *software* NEON on modern cores (which
+  is why hashcat prefers SHA-NI/crypto-ext over SIMD where present) — so the expected gain on the
+  phones we target is small for a lot of fiddly native code. The real speed levers are cheaper:
+  **using more cores** (the "easy cpu" toggle caps at 2 for a cool phone) and the **GPU-offload bridge**
+  above. Revisit only if targeting cores *without* hardware SHA-1.
 - **Connection-health polish** for the flaky Pi Zero BT link (clearer reconnect state).
 - **Multi-pwnagotchi** support (more than one device at once).
 - **R8 / minify** for release builds, with tested keep-rules for kotlinx-serialization + Compose.
