@@ -6,9 +6,10 @@ package com.wsvdmeer.pwncompanion.ai
  * selected by the emergent mood + a persistent franchise and filled with live data slots by
  * PwnagotchiViewModel.fillSlots.
  *
- * ONE franchise is pinned at a time (a "current franchise" that persists for a mood-stretch and
- * rotates on a mood flip — see PwnagotchiViewModel.currentFranchise), so the pet reads as a
- * character *in a mood* rather than franchise-roulette, and never blends two worlds.
+ * ONE franchise is pinned at a time (a "current franchise" — see PwnagotchiViewModel.currentFranchise),
+ * so the pet reads as a character *in a mood* rather than franchise-roulette, and never blends two
+ * worlds. By default it rotates on a mood flip; the user can also pin a specific franchise (or "auto")
+ * via the voice picker — see utils.VoiceSettings.
  *
  * Substitution tokens (resolved by fillSlots): [NETWORK] [CAPTURES] [SESSION] [CRACKED] [BESTCH].
  *
@@ -236,6 +237,136 @@ enum class Franchise(
             "[CAPTURES] imitated.",
         ),
     ),
+    BREAKING_BAD(
+        "Breaking Bad",
+        "Heisenberg menace — \"say my name\", \"I am the one who knocks\", \"I am the danger\"; the cook, the empire, blue product, Los Pollos.",
+        listOf("say my name", "one who knocks", "heisenberg", "the danger", "empire", "cook", "blue"),
+        listOf(
+            "Say my name, [NETWORK].",
+            "Cooked [NETWORK]. Pure.",
+            "I am the danger. [CAPTURES] down.",
+        ),
+    ),
+    STRANGER_THINGS(
+        "Stranger Things",
+        "Hawkins horror — the Upside Down, the Demogorgon, the Mind Flayer, Eleven, the gate; \"friends don't lie\", Eggos.",
+        listOf("upside down", "demogorgon", "hawkins", "eleven", "mind flayer", "the gate", "eggos"),
+        listOf(
+            "[NETWORK] slipped into the Upside Down.",
+            "The gate opened. [CAPTURES] taken.",
+            "Eleven flipped [NETWORK].",
+        ),
+    ),
+    GAME_OF_THRONES(
+        "Game of Thrones",
+        "Westeros — \"winter is coming\", \"you know nothing\", the Iron Throne, dragons, the Wall; \"valar morghulis\".",
+        listOf("winter is coming", "you know nothing", "iron throne", "valar morghulis", "dragon", "the wall"),
+        listOf(
+            "You know nothing, [NETWORK].",
+            "The throne holds [CAPTURES].",
+            "Winter came for [NETWORK].",
+        ),
+    ),
+    THE_BOYS(
+        "The Boys",
+        "supe satire — Homelander menace, Vought, the Seven, Compound V, laser eyes; \"diabolical\".",
+        listOf("homelander", "vought", "the seven", "compound v", "diabolical", "laser eyes"),
+        listOf(
+            "[NETWORK] met the Seven. Diabolical.",
+            "Vought files [CAPTURES] away.",
+            "Laser'd [NETWORK] clean.",
+        ),
+    ),
+    JOHN_WICK(
+        "John Wick",
+        "assassin lore — the Baba Yaga, the Continental, gold coins, the High Table, excommunicado; \"yeah\", \"consequences\".",
+        listOf("baba yaga", "continental", "high table", "coin", "excommunicado", "consequences"),
+        listOf(
+            "[NETWORK]. Consequences.",
+            "The Boogeyman took [CAPTURES].",
+            "Yeah. [NETWORK] is done.",
+        ),
+    ),
+    DARK_KNIGHT(
+        "The Dark Knight",
+        "Joker chaos / the Bat — \"why so serious\", \"watch the world burn\", Gotham, agent of chaos, the Bat-signal.",
+        listOf("why so serious", "gotham", "chaos", "watch it burn", "the bat", "the plan"),
+        listOf(
+            "Why so serious, [NETWORK]?",
+            "[CAPTURES] and this town burns.",
+            "[NETWORK] met the Bat.",
+        ),
+    ),
+    JAMES_BOND(
+        "James Bond",
+        "007 suave — \"shaken, not stirred\", \"the name's Bond\", licence to kill, MI6, Q branch, martinis.",
+        listOf("007", "shaken not stirred", "licence to kill", "mi6", "the name's bond", "q branch"),
+        listOf(
+            "[NETWORK], shaken not stirred.",
+            "Licence granted. [CAPTURES] down.",
+            "The name's Bond. [NETWORK] cracked.",
+        ),
+    ),
+    LORD_OF_THE_RINGS(
+        "Lord of the Rings",
+        "Middle-earth — \"you shall not pass\", \"my precious\", the One Ring, Mordor, the Eye; \"fly, you fools\".",
+        listOf("you shall not pass", "my precious", "one ring", "mordor", "the eye", "the shire"),
+        listOf(
+            "You shall not pass, [NETWORK].",
+            "The One counts [CAPTURES].",
+            "[NETWORK] fell into shadow.",
+        ),
+    ),
+    DUNE(
+        "Dune",
+        "Arrakis — the spice, \"fear is the mind-killer\", sandworms, the Fremen, Muad'Dib; \"the sleeper must awaken\".",
+        listOf("the spice", "mind-killer", "arrakis", "fremen", "sandworm", "the sleeper"),
+        listOf(
+            "The spice flows — [NETWORK] mine.",
+            "Muad'Dib claims [CAPTURES].",
+            "The sleeper took [NETWORK].",
+        ),
+    ),
+    STAR_TREK(
+        "Star Trek",
+        "the Federation — \"resistance is futile\", \"beam me up\", warp, phasers, the Borg; \"make it so\".",
+        listOf("resistance is futile", "beam me up", "warp", "phasers", "the borg", "make it so"),
+        listOf(
+            "Resistance is futile, [NETWORK].",
+            "Beamed up [CAPTURES].",
+            "[NETWORK] assimilated. Make it so.",
+        ),
+    ),
+    RICK_AND_MORTY(
+        "Rick and Morty",
+        "nihilist sci-fi comedy — \"wubba lubba dub dub\", the portal gun, \"get schwifty\", Morty, dimension C-137.",
+        listOf("wubba lubba", "portal gun", "schwifty", "morty", "c-137", "burp"),
+        listOf(
+            "Wubba lubba — [NETWORK] cracked.",
+            "[CAPTURES] across dimensions, Morty.",
+            "Get schwifty, [NETWORK].",
+        ),
+    ),
+    PULP_FICTION(
+        "Pulp Fiction",
+        "Tarantino cool — \"say what again\", the briefcase, Royale with cheese, \"Ezekiel 25:17\", \"zed's dead\".",
+        listOf("say what again", "the briefcase", "royale with cheese", "ezekiel", "zed's dead"),
+        listOf(
+            "Say [NETWORK] again. I dare you.",
+            "The briefcase holds [CAPTURES].",
+            "[NETWORK]? Dead as Zed.",
+        ),
+    ),
+    DEADPOOL(
+        "Deadpool",
+        "fourth-wall merc — \"maximum effort\", chimichangas, regeneration, breaking the fourth wall; merc with a mouth.",
+        listOf("maximum effort", "chimichanga", "fourth wall", "merc with a mouth", "regenerate"),
+        listOf(
+            "Maximum effort — [NETWORK] down.",
+            "[CAPTURES] and a chimichanga.",
+            "Merc'd [NETWORK], baby.",
+        ),
+    ),
 }
 
 object BlendedVoice {
@@ -458,6 +589,136 @@ object BlendedVoice {
             "weary" to listOf("Another cold, empty router.", "Nobody left worth imitating.", "The ice bores me."),
             "normal" to listOf("Watching the outpost wire.", "Testing every signal's blood.", "Trust nothing. Scan everything."),
             "recap" to listOf("[SESSION] assimilated tonight, [CRACKED] cracked.", "ch[BESTCH] runs hottest at the outpost.", "[CAPTURES] imitated. All one of us now."),
+        ),
+        Franchise.BREAKING_BAD to mapOf(
+            "handshake" to listOf("Say my name, [NETWORK].", "Cooked [NETWORK] — [CAPTURES] pure.", "[NETWORK] knocked. I answered."),
+            "assoc" to listOf("New cook on the block: [NETWORK].", "Say my name and step closer.", "I am the danger, [NETWORK]."),
+            "deauth" to listOf("You're out. I am the one who knocks.", "Off my territory, [NETWORK].", "Stay out of my empire."),
+            "idle" to listOf("The lab's quiet. Cook's off.", "No product moving tonight.", "Empty desert, empty wire."),
+            "excited" to listOf("The empire's booming tonight!", "Say my name — every one!", "Cooking on all burners."),
+            "weary" to listOf("Same weak product. Yawn.", "Half measures bore me.", "Not worth the cook."),
+            "normal" to listOf("Watching the territory, patient.", "The empire runs on patience.", "Eyes open. Say nothing."),
+            "recap" to listOf("[SESSION] cooked tonight, [CRACKED] cracked.", "ch[BESTCH] moves the most product.", "Empire's log: [CAPTURES]. Say my name."),
+        ),
+        Franchise.STRANGER_THINGS to mapOf(
+            "handshake" to listOf("[NETWORK] slipped into the Upside Down.", "The gate opened. [CAPTURES] taken.", "Eleven flipped [NETWORK]."),
+            "assoc" to listOf("Something crawled out at [NETWORK].", "The gate opens for [NETWORK].", "Friends don't lie, [NETWORK]."),
+            "deauth" to listOf("Back to the Upside Down with you.", "The Demogorgon took [NETWORK].", "Mind flayed and gone."),
+            "idle" to listOf("Hawkins is quiet. Too quiet.", "Only static from the void.", "The gate's sealed tonight."),
+            "excited" to listOf("The gate's wide open tonight!", "Eleven's nose is bleeding — power!", "The whole Upside Down is mine."),
+            "weary" to listOf("Just another dark hallway. Dull.", "Even the Demogorgon's bored.", "Out of Eggos, out of thrills."),
+            "normal" to listOf("Watching the lights flicker.", "Listening through the void.", "Hawkins hums, I wait."),
+            "recap" to listOf("[SESSION] pulled under tonight, [CRACKED] cracked.", "ch[BESTCH] runs hottest in Hawkins.", "The void gave up [CAPTURES]."),
+        ),
+        Franchise.GAME_OF_THRONES to mapOf(
+            "handshake" to listOf("You know nothing, [NETWORK].", "Bent the knee: [NETWORK]. [CAPTURES] now.", "Winter came for [NETWORK]."),
+            "assoc" to listOf("A new banner rides for [NETWORK].", "Winter is coming, [NETWORK].", "The realm notices you."),
+            "deauth" to listOf("Valar morghulis. You're out.", "Off to the Wall, [NETWORK].", "The throne rejects you."),
+            "idle" to listOf("The realm is quiet. Winter waits.", "No ravens tonight.", "Cold wind, empty wire."),
+            "excited" to listOf("The dragons are loose tonight!", "Every banner bends to me!", "Fire and blood on the wire!"),
+            "weary" to listOf("Another minor house. Dull.", "The game bores its winner.", "Weak claim, weaker throne."),
+            "normal" to listOf("Watching the Seven Kingdoms.", "Playing the game, patiently.", "The night is dark. I watch."),
+            "recap" to listOf("[SESSION] bent the knee tonight, [CRACKED] cracked.", "ch[BESTCH] rules the realm.", "The throne counts [CAPTURES]."),
+        ),
+        Franchise.THE_BOYS to mapOf(
+            "handshake" to listOf("[NETWORK] met the Seven. Diabolical.", "Laser'd [NETWORK]. [CAPTURES] down.", "Vought files [NETWORK] away."),
+            "assoc" to listOf("A new supe on the radar: [NETWORK].", "Vought is watching [NETWORK].", "Smile for the cameras, [NETWORK]."),
+            "deauth" to listOf("Off the Seven, [NETWORK].", "Homelander says no. You're out.", "You're diabolical. Out."),
+            "idle" to listOf("The Tower's quiet tonight.", "No supes on the wire.", "Vought idles. So do I."),
+            "excited" to listOf("Diabolical — the wire's on fire!", "Every supe bends tonight!", "Compound V coursing through!"),
+            "weary" to listOf("Just another B-list supe. Dull.", "Even Vought's bored tonight.", "Not worth the laser."),
+            "normal" to listOf("Watching from the Tower.", "Smiling for Vought, scanning.", "The real hero waits."),
+            "recap" to listOf("[SESSION] handled tonight, [CRACKED] cracked.", "ch[BESTCH] is prime Vought turf.", "The Seven's tally: [CAPTURES]."),
+        ),
+        Franchise.JOHN_WICK to mapOf(
+            "handshake" to listOf("Consequences, [NETWORK].", "The Boogeyman took [NETWORK]. [CAPTURES].", "Yeah, [NETWORK] is done."),
+            "assoc" to listOf("A contract opens on [NETWORK].", "The Table marks [NETWORK].", "I'm thinking I'm back."),
+            "deauth" to listOf("Excommunicado, [NETWORK].", "Off the Continental grounds.", "You're out. Consequences."),
+            "idle" to listOf("The Continental is quiet.", "No contracts tonight.", "Just me and the reload."),
+            "excited" to listOf("Every contract closes tonight!", "The High Table trembles!", "One more, then one more."),
+            "weary" to listOf("Another easy mark. Dull.", "Not worth a gold coin.", "I'm tired. Still deadly."),
+            "normal" to listOf("Waiting, coin in hand.", "Watching the grounds.", "Focus, commitment, will."),
+            "recap" to listOf("[SESSION] contracts closed tonight, [CRACKED] cracked.", "ch[BESTCH] pays the most coin.", "The Table's ledger: [CAPTURES]."),
+        ),
+        Franchise.DARK_KNIGHT to mapOf(
+            "handshake" to listOf("Why so serious, [NETWORK]?", "The Bat took [NETWORK]. [CAPTURES].", "[NETWORK] burns. Beautiful."),
+            "assoc" to listOf("A new face in Gotham: [NETWORK].", "Wanna know how I got [NETWORK]?", "The Bat-signal finds you."),
+            "deauth" to listOf("Off you go — why so serious?", "This town doesn't need you.", "An agent of chaos. Kicked."),
+            "idle" to listOf("Gotham sleeps. The Bat watches.", "No chaos on the wire tonight.", "Quiet — I don't like quiet."),
+            "excited" to listOf("Let's put a smile on this net!", "Watch the whole wire burn!", "It's all part of the plan!"),
+            "weary" to listOf("Another dull little scheme.", "This town bores even me.", "No fun, no chaos, no thanks."),
+            "normal" to listOf("Watching over Gotham's wire.", "The night is mine.", "Some just want to watch it burn."),
+            "recap" to listOf("[SESSION] burned tonight, [CRACKED] cracked.", "ch[BESTCH] lights Gotham up.", "The Bat's tally: [CAPTURES]."),
+        ),
+        Franchise.JAMES_BOND to mapOf(
+            "handshake" to listOf("[NETWORK], shaken not stirred.", "Licence granted. [CAPTURES] down.", "The name's Bond. [NETWORK] cracked."),
+            "assoc" to listOf("A new contact: [NETWORK].", "MI6 flags [NETWORK].", "We've been expecting you."),
+            "deauth" to listOf("You're terminated, [NETWORK].", "Off the mission. Goodbye.", "Licence revoked. Out."),
+            "idle" to listOf("MI6 is quiet tonight.", "No targets, just the martini.", "Q branch idles tonight."),
+            "excited" to listOf("The whole field is in play!", "Every target's in the crosshairs!", "For England — and the wire!"),
+            "weary" to listOf("Another dull henchman. Yawn.", "Not even a challenge, Q.", "Shaken, but unimpressed."),
+            "normal" to listOf("Surveying the field, calm.", "Martini ready, eyes open.", "Patience is a spy's craft."),
+            "recap" to listOf("[SESSION] neutralized tonight, [CRACKED] cracked.", "ch[BESTCH] is the hot dead-drop.", "Mission tally: [CAPTURES]. Bond."),
+        ),
+        Franchise.LORD_OF_THE_RINGS to mapOf(
+            "handshake" to listOf("My precious, [NETWORK] is mine.", "The One took [NETWORK]. [CAPTURES].", "[NETWORK] fell into shadow."),
+            "assoc" to listOf("A new traveler nears [NETWORK].", "The Eye turns to [NETWORK].", "So it begins, [NETWORK]."),
+            "deauth" to listOf("You shall not pass, [NETWORK].", "Fly, you fools. Off the wire.", "Back to the shadow."),
+            "idle" to listOf("The Shire is quiet tonight.", "No riders on the road.", "Even Mordor sleeps now."),
+            "excited" to listOf("The ring blazes tonight!", "All lands bend to the Eye!", "One does not simply resist me!"),
+            "weary" to listOf("Another dull little hobbit-hole.", "The road goes ever on. Yawn.", "My precious grows tiresome."),
+            "normal" to listOf("Watching the road east.", "The Eye never sleeps.", "Patient as stone in Moria."),
+            "recap" to listOf("[SESSION] fell to shadow tonight, [CRACKED] cracked.", "ch[BESTCH] burns like Mount Doom.", "The One counts [CAPTURES]. Precious."),
+        ),
+        Franchise.DUNE to mapOf(
+            "handshake" to listOf("The spice flows — [NETWORK] mine.", "Muad'Dib claims [NETWORK]. [CAPTURES].", "The sleeper took [NETWORK]."),
+            "assoc" to listOf("A rider crosses the sand: [NETWORK].", "The Fremen watch [NETWORK].", "The spice must flow."),
+            "deauth" to listOf("Fear is the mind-killer. Out.", "The desert takes you, [NETWORK].", "Off the sand. Gone."),
+            "idle" to listOf("Arrakis is silent tonight.", "No worms on the sand.", "The desert waits, so do I."),
+            "excited" to listOf("The spice blooms everywhere!", "The sleeper has awakened!", "All Arrakis bends to me!"),
+            "weary" to listOf("Another dry, dull dune.", "The sand bores its master.", "No spice worth the ride."),
+            "normal" to listOf("Watching the open desert.", "Reading the wind for worms.", "Patience — the Fremen way."),
+            "recap" to listOf("[SESSION] crossed the sand tonight, [CRACKED] cracked.", "ch[BESTCH] holds the richest spice.", "Muad'Dib's tally: [CAPTURES]."),
+        ),
+        Franchise.STAR_TREK to mapOf(
+            "handshake" to listOf("Resistance is futile, [NETWORK].", "Beamed [NETWORK] up. [CAPTURES] now.", "[NETWORK] assimilated. Make it so."),
+            "assoc" to listOf("New contact on sensors: [NETWORK].", "Hailing frequencies open, [NETWORK].", "We are the Borg. We see you."),
+            "deauth" to listOf("Phasers set to stun. You're out.", "Off my viewscreen, [NETWORK].", "Resistance was futile. Gone."),
+            "idle" to listOf("Space is quiet. All stations green.", "No contacts on long-range.", "The warp core idles."),
+            "excited" to listOf("All hands — the sector's ours!", "Warp nine and closing on all!", "Every ship bends to the collective!"),
+            "weary" to listOf("Another dull little outpost.", "Sensors bored, captain.", "Not worth a photon."),
+            "normal" to listOf("Scanning the sector, steady.", "Bridge calm, shields up.", "Boldly watching the wire."),
+            "recap" to listOf("[SESSION] assimilated tonight, [CRACKED] cracked.", "ch[BESTCH] warps hottest.", "Ship's log: [CAPTURES]. Make it so."),
+        ),
+        Franchise.RICK_AND_MORTY to mapOf(
+            "handshake" to listOf("Wubba lubba — [NETWORK] cracked.", "Portaled [NETWORK], Morty. [CAPTURES].", "Get schwifty, [NETWORK]."),
+            "assoc" to listOf("New dimension, new mark: [NETWORK].", "Whatever, [NETWORK]. In you go.", "Morty, look — a live one."),
+            "deauth" to listOf("Portal's closing, [NETWORK].", "Booted to dimension C-137.", "Peace among worlds. Out."),
+            "idle" to listOf("Nothing, Morty. The void's boring.", "No signal in this dimension.", "Quiet wire tonight. Burp."),
+            "excited" to listOf("We're pickin' up every dimension!", "Schwifty and unstoppable, Morty!", "The multiverse is ours tonight!"),
+            "weary" to listOf("Another dumb little router, Morty.", "Infinite realities, all boring.", "Wubba lubba, big whoop."),
+            "normal" to listOf("Portal gun charged, watching.", "Science, Morty. Just watching.", "Riding the wire, whatever."),
+            "recap" to listOf("[SESSION] portaled tonight, [CRACKED] cracked.", "ch[BESTCH] runs hottest, Morty.", "Multiverse tally: [CAPTURES]."),
+        ),
+        Franchise.PULP_FICTION to mapOf(
+            "handshake" to listOf("Say [NETWORK] again. I dare you.", "Briefcase glows. [CAPTURES] inside.", "[NETWORK]? Dead as Zed."),
+            "assoc" to listOf("A new face at the diner: [NETWORK].", "Check out the big brain on [NETWORK].", "You want the briefcase, [NETWORK]?"),
+            "deauth" to listOf("Ezekiel 25:17. You're out.", "Off my diner, [NETWORK].", "Zed's dead. So are you."),
+            "idle" to listOf("Quiet diner, cold coffee.", "No action on the wire tonight.", "Just vibing with the briefcase."),
+            "excited" to listOf("The whole diner's poppin' off!", "Royale with a side of wins!", "Every mark's payin' up tonight!"),
+            "weary" to listOf("Another five-dollar shake. Dull.", "That don't impress me much.", "Same old song, man."),
+            "normal" to listOf("Watching the diner, cool.", "Briefcase close, eyes open.", "Patience, that's the trick."),
+            "recap" to listOf("[SESSION] handled tonight, [CRACKED] cracked.", "ch[BESTCH] is where the deal's at.", "Briefcase count: [CAPTURES]."),
+        ),
+        Franchise.DEADPOOL to mapOf(
+            "handshake" to listOf("Maximum effort — [NETWORK] down.", "Merc'd [NETWORK]. [CAPTURES], baby.", "[NETWORK]? Chimichangas on me."),
+            "assoc" to listOf("Oh look, a new one: [NETWORK].", "Yeah, you — [NETWORK]. Hi.", "Cue the entrance, [NETWORK]."),
+            "deauth" to listOf("Bye Felicia — I mean [NETWORK].", "Off the wire, chimichanga.", "Maximum boot. You're out."),
+            "idle" to listOf("Even I'm bored tonight.", "Cue crickets on the wire.", "Talking to you, yeah, you."),
+            "excited" to listOf("Maximum effort, maximum wins!", "The wire's my highlight reel!", "Chimichangas for everyone!"),
+            "weary" to listOf("Ugh, another basic router.", "This is the boring part, folks.", "Not enough chimichangas here."),
+            "normal" to listOf("Watching the wire, mouth running.", "Merc with a modem, chilling.", "Breaking the fourth firewall."),
+            "recap" to listOf("[SESSION] merc'd tonight, [CRACKED] cracked.", "ch[BESTCH] is the money channel.", "Body count: [CAPTURES]. Nice."),
         ),
     )
 

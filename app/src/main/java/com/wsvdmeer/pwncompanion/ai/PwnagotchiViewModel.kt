@@ -21,6 +21,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import com.wsvdmeer.pwncompanion.database.PersonalityRepository
 import com.wsvdmeer.pwncompanion.models.LearningStats
+import com.wsvdmeer.pwncompanion.utils.VoiceSettings
 
 /**
  * The companion's emergent personality — NOT a fixed, user-selectable mood.
@@ -149,6 +150,9 @@ enum class ExperienceTier(
 class PwnagotchiViewModel(application: Application) : ViewModel() {
     private val tag = "PwnagotchiVM"
 
+    /** App context for reading persisted settings (e.g. the user's voice/franchise choice). */
+    private val appContext = application.applicationContext
+
     /** Personality state machine — evolves with events, the device's mood, and idle decay. */
     private val personalityEngine = PersonalityStateEngine()
 
@@ -179,16 +183,36 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
     @Volatile private var _franchisePinnedFor: String? = null
 
     /** The pinned film-world's label, surfaced so the console can show which world the pet
-     *  is currently voicing (updated whenever the disposition flip rotates the franchise). */
+     *  is currently voicing (updated on a mood-flip rotation OR the user's explicit pin). */
     private val _franchiseLabel = MutableStateFlow(_currentFranchise.label)
     val franchiseLabel = _franchiseLabel.asStateFlow()
 
+    init {
+        // Apply + observe the user's voice pool (the enabled franchises). When it changes and the
+        // current world is no longer allowed, re-roll within the pool + update the console label now.
+        VoiceSettings.ensureLoaded(appContext)
+        viewModelScope.launch {
+            VoiceSettings.enabled.collect {
+                val pool = VoiceSettings.activePool(appContext)
+                if (_currentFranchise !in pool) {
+                    _currentFranchise = pool.random()
+                    _franchiseLabel.value = _currentFranchise.label
+                }
+            }
+        }
+    }
+
     private fun currentFranchise(): Franchise {
+        // Rotate only within the user's enabled pool (one enabled = effectively pinned).
+        val pool = VoiceSettings.activePool(appContext)
         val disp = personality.value.disposition
-        if (disp != _franchisePinnedFor) {
-            val opts = BlendedVoice.franchises
-            var f = opts.random()
-            if (f == _currentFranchise && opts.size > 1) f = opts[(opts.indexOf(f) + 1) % opts.size]
+        if (_currentFranchise !in pool) {
+            _currentFranchise = pool.random()
+            _franchisePinnedFor = disp
+            _franchiseLabel.value = _currentFranchise.label
+        } else if (disp != _franchisePinnedFor) {
+            var f = pool.random()
+            if (f == _currentFranchise && pool.size > 1) f = pool[(pool.indexOf(f) + 1) % pool.size]
             _currentFranchise = f
             _franchisePinnedFor = disp
             _franchiseLabel.value = f.label

@@ -44,6 +44,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -73,7 +74,10 @@ import com.wsvdmeer.pwncompanion.presentation.theme.TerminalMono
 import com.wsvdmeer.pwncompanion.utils.GeoPoint
 import com.wsvdmeer.pwncompanion.utils.MapTiles
 import com.wsvdmeer.pwncompanion.utils.TileMapLoader
+import android.os.Build
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withContext
 import kotlin.math.PI
 import kotlin.math.cos
@@ -232,7 +236,7 @@ fun CapturesDetailScreen(
                         color = dim, fontSize = 11.sp, fontFamily = TerminalMono
                     )
                     Spacer(Modifier.height(4.dp))
-                    PixelBasemap(
+                    CaptureMap(
                         points = captures.filter { it.isGeolocated },
                         current = gps?.takeIf { it.isValid() },
                         onCatch = { caps ->
@@ -241,9 +245,7 @@ fun CapturesDetailScreen(
                         },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .border(1.dp, MaterialTheme.colorScheme.outline)
                             .background(Color(0xFF02060A))
-                            .padding(4.dp)
                     )
                     Spacer(Modifier.height(8.dp))
                     ConsoleRuleLocal()
@@ -1025,6 +1027,25 @@ private fun etaLocal(tried: Long, total: Long, perSec: Long): String {
  * [AsciiHeatmap] when there's no network / tiles unavailable, so it always shows *some*
  * map. Loading + recolor run off the main thread.
  */
+/** Map dispatcher: the smooth slippy renderer (continuous GPU zoom + pixel shader) on API 33+,
+ *  else the coarse-grid fallback for older devices. */
+@Composable
+private fun CaptureMap(
+    points: List<CaptureEntry>,
+    current: GpsData?,
+    onCatch: (List<CaptureEntry>) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+        SlippyPixelMap(points, current, onCatch, modifier)
+    else
+        PixelBasemap(points, current, onCatch, modifier)
+}
+
+/** Pinch past this scale (and settle) triggers a deeper-detail tile re-fetch of the viewport.
+ *  Gated behind an actual pinch gesture ([userZoomed]) so the map's initial auto-zoom never fires it. */
+private const val DEEP_ZOOM_TRIGGER = 2.5f
+
 @Composable
 private fun PixelBasemap(
     points: List<CaptureEntry>,
@@ -1035,23 +1056,43 @@ private fun PixelBasemap(
     val context = LocalContext.current
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     val geo = remember(points) { points.filter { it.latitude != null && it.longitude != null } }
-
-    var grid by remember(points) { mutableStateOf<MapGrid?>(null) }
-    var mapTiles by remember(points) { mutableStateOf<MapTiles?>(null) }
-    var failed by remember(points) { mutableStateOf(false) }
-
-    // Rebuild when a GPS fix first appears (so the tile bounds include your position);
-    // small position changes after that are handled by the live overlay below, not a rebuild.
     val hasFix = current?.isValid() == true
-    LaunchedEffect(points, hasFix) {
+    // Key the map state on ROUNDED geo bounds (+ a coarse fix cell), NOT the exact capture list — so
+    // live capture churn and GPS jitter don't reload the map and throw away the user's zoom.
+    val geoKey = if (geo.isEmpty()) "empty" else buildString {
+        append((geo.minOf { it.latitude!! } * 1000).toInt()); append(',')
+        append((geo.maxOf { it.latitude!! } * 1000).toInt()); append(',')
+        append((geo.minOf { it.longitude!! } * 1000).toInt()); append(',')
+        append((geo.maxOf { it.longitude!! } * 1000).toInt())
+        if (hasFix && current != null) {
+            append('|'); append((current.latitude * 100).toInt()); append(','); append((current.longitude * 100).toInt())
+        }
+    }
+
+    var grid by remember(geoKey) { mutableStateOf<MapGrid?>(null) }
+    var mapTiles by remember(geoKey) { mutableStateOf<MapTiles?>(null) }
+    var failed by remember(geoKey) { mutableStateOf(false) }
+    // Deeper-zoom-via-refetch state: keep the full-spread "home" map so a zoomed-in view can revert.
+    // `zoomed` = showing a re-fetched finer viewport; `loadingDetail` gates the "loading detail…" hint.
+    var homeTiles by remember(geoKey) { mutableStateOf<MapTiles?>(null) }
+    var homeGrid by remember(geoKey) { mutableStateOf<MapGrid?>(null) }
+    var zoomed by remember(geoKey) { mutableStateOf(false) }
+    var loadingDetail by remember(geoKey) { mutableStateOf(false) }
+    // True once the user actually pinches (so the deeper-zoom re-fetch can't misfire on the initial
+    // auto-zoom when the map opens centred on "you"). Reset after a deepen / reset-to-home.
+    var userZoomed by remember(geoKey) { mutableStateOf(false) }
+
+    LaunchedEffect(geoKey) {
         grid = null; mapTiles = null; failed = false
+        homeTiles = null; homeGrid = null; zoomed = false; loadingDetail = false
         if (geo.isEmpty()) { failed = true; return@LaunchedEffect }
         val pts = geo.map { GeoPoint(it.latitude!!, it.longitude!!) } +
             (current?.takeIf { it.isValid() }?.let { listOf(GeoPoint(it.latitude, it.longitude)) } ?: emptyList())
         val tiles = TileMapLoader.load(context, pts)
         if (tiles == null) { failed = true; return@LaunchedEffect }
-        mapTiles = tiles
-        grid = withContext(Dispatchers.Default) { buildMapGrid(tiles, geo) }
+        val built = withContext(Dispatchers.Default) { buildMapGrid(tiles, geo) }
+        mapTiles = tiles; grid = built
+        homeTiles = tiles; homeGrid = built   // remember the full spread as "home"
     }
 
     val g = grid
@@ -1069,9 +1110,9 @@ private fun PixelBasemap(
             }
             Column(modifier = modifier) {
                 // Pan + pinch-zoom state. Reset whenever the point set changes.
-                var scale by remember(points) { mutableStateOf(if (youCell != null) 3f else 1f) }
-                var offset by remember(points) { mutableStateOf(Offset.Zero) }
-                var inited by remember(points) { mutableStateOf(false) }
+                var scale by remember(geoKey) { mutableStateOf(if (youCell != null) 3f else 1f) }
+                var offset by remember(geoKey) { mutableStateOf(Offset.Zero) }
+                var inited by remember(geoKey) { mutableStateOf(false) }
 
                 // Cap the map height so a tall capture area can't push the list off-screen;
                 // BoxWithConstraints gives us the pixel size for gesture clamping + centring.
@@ -1091,6 +1132,42 @@ private fun PixelBasemap(
                         val maxX = ((cW - wPx) / 2f).coerceAtLeast(0f)
                         val maxY = ((cH - hPx) / 2f).coerceAtLeast(0f)
                         return Offset(o.x.coerceIn(-maxX, maxX), o.y.coerceIn(-maxY, maxY))
+                    }
+
+                    // Deeper zoom: when the user pinches past the threshold (and settles), re-fetch
+                    // tiles for the visible viewport and rebuild the SAME coarse grid over them — so
+                    // pixels stay the same size + crisp while streets get finer (detail comes from
+                    // tighter geographic bounds, never from up-sampling the old composite). One level
+                    // deep; double-tap returns to the full spread.
+                    LaunchedEffect(homeGrid, wPx, hPx) {
+                        snapshotFlow { scale }.collectLatest { s ->
+                            // Each settled pinch past the threshold deepens one more level (not a
+                            // one-shot): z11 → z13 → … up to max tile detail. `zoomed` isn't gated
+                            // here so it can keep going deeper; double-tap returns to the full spread.
+                            if (loadingDetail || !userZoomed || s < DEEP_ZOOM_TRIGGER) return@collectLatest
+                            delay(260)   // settle: collectLatest cancels this if the pinch continues
+                            val gg = grid ?: return@collectLatest
+                            val tt = mapTiles ?: return@collectLatest
+                            if (tt.zoom >= 19) return@collectLatest   // already at max tile detail
+                            val cwLocal = floor(min(wPx / gg.cols, hPx / gg.rows)).coerceAtLeast(1f) * scale
+                            val ox = (wPx - cwLocal * gg.cols) / 2f + offset.x
+                            val oy = (hPx - cwLocal * gg.rows) / 2f + offset.y
+                            val colL = ((0f - ox) / cwLocal).coerceIn(0f, gg.cols.toFloat())
+                            val colR = ((wPx - ox) / cwLocal).coerceIn(0f, gg.cols.toFloat())
+                            val rowT = ((0f - oy) / cwLocal).coerceIn(0f, gg.rows.toFloat())
+                            val rowB = ((hPx - oy) / cwLocal).coerceIn(0f, gg.rows.toFloat())
+                            val bmpW = tt.bitmap.width.toFloat(); val bmpH = tt.bitmap.height.toFloat()
+                            val c1 = tt.unproject(colL / gg.cols * bmpW, rowT / gg.rows * bmpH)
+                            val c2 = tt.unproject(colR / gg.cols * bmpW, rowB / gg.rows * bmpH)
+                            loadingDetail = true
+                            val finer = TileMapLoader.load(context, listOf(c1, c2))
+                            if (finer != null) {
+                                val finerGrid = withContext(Dispatchers.Default) { buildMapGrid(finer, geo) }
+                                mapTiles = finer; grid = finerGrid; zoomed = true
+                                scale = 1f; offset = Offset.Zero; userZoomed = false
+                            }
+                            loadingDetail = false
+                        }
                     }
 
                     // Start centred on the live "you" fix (zoomed in), so the map opens on
@@ -1118,16 +1195,32 @@ private fun PixelBasemap(
                             // because the Canvas re-draws rects at the scaled cell size —
                             // no bitmap resampling, so the pixel look is preserved.
                             .pointerInput(g) {
-                                detectTransformGestures { _, pan, zoom, _ ->
-                                    val ns = (scale * zoom).coerceIn(1f, 10f)
-                                    scale = ns
-                                    offset = clampOffset(offset + pan, ns)
+                                detectTransformGestures { centroid, pan, zoom, _ ->
+                                    if (zoom != 1f) userZoomed = true   // a real pinch (not just a pan)
+                                    val s0 = scale
+                                    val s1 = (s0 * zoom).coerceIn(1f, 10f)
+                                    // Zoom toward the pinch focal point (centroid), not the map centre,
+                                    // so the map zooms where your fingers are — otherwise the deeper
+                                    // re-fetch grabs the wrong area. Keep the content under `centroid`
+                                    // fixed as scale goes s0 → s1.
+                                    val ox0 = (wPx - cw0 * s0 * g.cols) / 2f + offset.x
+                                    val oy0 = (hPx - cw0 * s0 * g.rows) / 2f + offset.y
+                                    val colF = (centroid.x - ox0) / (cw0 * s0)
+                                    val rowF = (centroid.y - oy0) / (cw0 * s0)
+                                    val offX = (centroid.x - colF * cw0 * s1) - (wPx - cw0 * s1 * g.cols) / 2f
+                                    val offY = (centroid.y - rowF * cw0 * s1) - (hPx - cw0 * s1 * g.rows) / 2f
+                                    scale = s1
+                                    offset = clampOffset(Offset(offX + pan.x, offY + pan.y), s1)
                                 }
                             }
                             // Single-tap → open the nearest catch's detail; double-tap → reset view.
                             .pointerInput(g) {
                                 detectTapGestures(
-                                    onDoubleTap = { scale = 1f; offset = Offset.Zero },
+                                    onDoubleTap = {
+                                        // Back to the full spread if we'd zoomed into a finer viewport.
+                                        if (zoomed) { mapTiles = homeTiles; grid = homeGrid; zoomed = false }
+                                        scale = 1f; offset = Offset.Zero; userZoomed = false
+                                    },
                                     onTap = { pos ->
                                         // Invert the same transform the draw pass uses, find the closest
                                         // catch cell, and hand back all captures in it (the caller opens
@@ -1182,7 +1275,8 @@ private fun PixelBasemap(
                 }
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    "tap a catch to open · pinch to zoom · drag to pan · double-tap to reset",
+                    if (loadingDetail) "loading detail…"
+                    else "tap a catch to open · pinch to zoom · drag to pan · double-tap to reset",
                     color = dim.copy(alpha = 0.6f), fontSize = 9.sp, fontFamily = TerminalMono
                 )
             }

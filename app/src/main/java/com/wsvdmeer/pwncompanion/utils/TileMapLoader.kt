@@ -12,9 +12,11 @@ import okhttp3.Request
 import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlin.math.PI
+import kotlin.math.atan
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.ln
+import kotlin.math.sinh
 import kotlin.math.tan
 
 /** A lat/lon pair for map projection. */
@@ -39,6 +41,18 @@ data class MapTiles(
         val worldY = (1.0 - ln(tan(latRad) + 1.0 / cos(latRad)) / PI) / 2.0 * n * 256.0
         return (worldX - originPxX).toFloat() to (worldY - originPxY).toFloat()
     }
+
+    /** Inverse of [project]: a pixel within [bitmap] → lat/lon. Used to turn a zoomed-in viewport's
+     *  corners back into geographic bounds so a deeper set of tiles can be fetched for that area. */
+    fun unproject(px: Float, py: Float): GeoPoint {
+        val n = (1 shl zoom).toDouble()
+        val worldX = px + originPxX
+        val worldY = py + originPxY
+        val lon = worldX / (n * 256.0) * 360.0 - 180.0
+        val yy = worldY / (n * 256.0)
+        val latRad = atan(sinh(PI * (1.0 - 2.0 * yy)))
+        return GeoPoint(Math.toDegrees(latRad), lon)
+    }
 }
 
 /**
@@ -54,13 +68,34 @@ data class MapTiles(
 object TileMapLoader {
     private const val TAG = "TileMapLoader"
     private const val TILE = 256
-    private const val MAX_TILES_PER_AXIS = 3
+    private const val MAX_TILES_PER_AXIS = 4
     private const val USER_AGENT = "PwnCompanion/1.0 (pwnagotchi companion app)"
+
+    /** Bound the on-disk tile cache. Deeper-zoom re-fetches pull many distinct tiles over time, so
+     *  without this the cache would grow unbounded. Oldest tiles are pruned once we exceed the cap. */
+    private const val CACHE_CAP_BYTES = 30L * 1024 * 1024
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(12, TimeUnit.SECONDS)
         .build()
+
+    // Decoded-tile memory cache so the smooth slippy renderer doesn't re-decode from disk each frame.
+    private val memCache = object : android.util.LruCache<String, Bitmap>(24 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap) = value.byteCount
+    }
+
+    /** One tile bitmap (memory → disk → network), for the continuous slippy-map renderer. Returns
+     *  null off-range or on failure so the caller just draws the dark background there. */
+    suspend fun tile(context: Context, z: Int, x: Int, y: Int): Bitmap? {
+        val n = 1 shl z
+        if (z < 0 || x < 0 || y < 0 || x >= n || y >= n) return null
+        val key = "$z/$x/$y"
+        memCache.get(key)?.let { return it }
+        return withContext(Dispatchers.IO) {
+            fetchTile(context, z, x, y)?.also { memCache.put(key, it) }
+        }
+    }
 
     private fun tileX(lon: Double, z: Int): Double = (lon + 180.0) / 360.0 * (1 shl z)
     private fun tileY(lat: Double, z: Int): Double {
@@ -163,13 +198,27 @@ object TileMapLoader {
                     return null
                 }
                 val bytes = resp.body?.bytes() ?: return null
-                runCatching { f.writeBytes(bytes) }
+                runCatching { f.writeBytes(bytes); pruneCache(cacheDir) }
                 Log.i(TAG, "tile $z/$x/$y fetched ${bytes.size}B")
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
             }
         } catch (e: Exception) {
             Log.w(TAG, "fetchTile $z/$x/$y failed: ${e.message}")
             null
+        }
+    }
+
+    /** Keep the tile cache under [CACHE_CAP_BYTES] by deleting the oldest files (by last-modified)
+     *  down to ~80% of the cap. Cheap: runs only after a fresh tile is written. */
+    private fun pruneCache(dir: File) {
+        val files = dir.listFiles() ?: return
+        var total = files.sumOf { it.length() }
+        if (total <= CACHE_CAP_BYTES) return
+        val target = (CACHE_CAP_BYTES * 8) / 10
+        for (f in files.sortedBy { it.lastModified() }) {
+            if (total <= target) break
+            val len = f.length()
+            if (f.delete()) total -= len
         }
     }
 }

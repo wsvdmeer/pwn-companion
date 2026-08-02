@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -27,7 +29,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
+import com.wsvdmeer.pwncompanion.ai.Franchise
 import com.wsvdmeer.pwncompanion.utils.NotifSettings
+import com.wsvdmeer.pwncompanion.utils.VoiceSettings
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
@@ -330,9 +334,11 @@ fun LearningDetailScreen(viewModel: MainViewModel, paddingValues: PaddingValues,
 fun SettingsScreen(paddingValues: PaddingValues, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
-    LaunchedEffect(Unit) { NotifSettings.ensureLoaded(context) }
+    LaunchedEffect(Unit) { NotifSettings.ensureLoaded(context); VoiceSettings.ensureLoaded(context) }
     val onCatch by NotifSettings.onCatch.collectAsState()
     val onCracked by NotifSettings.onCracked.collectAsState()
+    val enabledSet by VoiceSettings.enabled.collectAsState()
+    val allOn = enabledSet.size == Franchise.entries.size
     val primary = MaterialTheme.colorScheme.primary
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     val onSurface = MaterialTheme.colorScheme.onSurface
@@ -343,6 +349,7 @@ fun SettingsScreen(paddingValues: PaddingValues, onBack: () -> Unit) {
             .background(MaterialTheme.colorScheme.background)
             .padding(paddingValues)
             .padding(horizontal = 12.dp)
+            .verticalScroll(rememberScrollState())
     ) {
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -360,6 +367,17 @@ fun SettingsScreen(paddingValues: PaddingValues, onBack: () -> Unit) {
         Spacer(Modifier.height(4.dp))
         SettingToggle("handshake caught", onCatch, primary, dim, onSurface) { NotifSettings.setOnCatch(context, !onCatch) }
         SettingToggle("password cracked", onCracked, primary, dim, onSurface) { NotifSettings.setOnCracked(context, !onCracked) }
+
+        Spacer(Modifier.height(16.dp))
+        Text("voice — franchises in rotation", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
+        Spacer(Modifier.height(4.dp))
+        SettingToggle("all franchises", allOn, primary, dim, onSurface) { VoiceSettings.setAll(context, !allOn) }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+        Franchise.entries.sortedBy { it.label.lowercase() }.forEach { f ->
+            val on = f.name in enabledSet
+            SettingToggle(f.label, on, primary, dim, onSurface) { VoiceSettings.setEnabled(context, f, !on) }
+        }
+        Spacer(Modifier.height(24.dp))
     }
 }
 
