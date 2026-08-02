@@ -68,6 +68,7 @@ import com.wsvdmeer.pwncompanion.models.GpsData
 import com.wsvdmeer.pwncompanion.BuildConfig
 import com.wsvdmeer.pwncompanion.crack.CrackEngine
 import com.wsvdmeer.pwncompanion.crack.CrackSettings
+import com.wsvdmeer.pwncompanion.crack.KeyGenerators
 import com.wsvdmeer.pwncompanion.crack.CrackState
 import com.wsvdmeer.pwncompanion.presentation.MainViewModel
 import com.wsvdmeer.pwncompanion.presentation.theme.TerminalMono
@@ -120,7 +121,6 @@ fun CapturesDetailScreen(
     val gentleCpu by CrackSettings.gentleCpu.collectAsState()
     val chargerOnly by CrackSettings.chargerOnly.collectAsState()
     val lowBatteryStop by CrackSettings.lowBatteryStop.collectAsState()
-    val targeted by CrackSettings.targeted.collectAsState()
 
     val primary = MaterialTheme.colorScheme.primary
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
@@ -346,11 +346,9 @@ fun CapturesDetailScreen(
     if (showOptions) {
         CrackPowerSheet(
             gentleCpu = gentleCpu, chargerOnly = chargerOnly, lowBatteryStop = lowBatteryStop,
-            targeted = targeted,
             onGentle = { CrackSettings.setGentleCpu(context, !gentleCpu) },
             onCharger = { CrackSettings.setChargerOnly(context, !chargerOnly) },
             onLowBatt = { CrackSettings.setLowBatteryStop(context, !lowBatteryStop) },
-            onTargeted = { CrackSettings.setTargeted(context, !targeted) },
             onDismiss = { showOptions = false },
         )
     }
@@ -698,12 +696,14 @@ private fun FiltersSheet(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CrackPowerSheet(
-    gentleCpu: Boolean, chargerOnly: Boolean, lowBatteryStop: Boolean, targeted: Boolean,
-    onGentle: () -> Unit, onCharger: () -> Unit, onLowBatt: () -> Unit, onTargeted: () -> Unit,
+    gentleCpu: Boolean, chargerOnly: Boolean, lowBatteryStop: Boolean,
+    onGentle: () -> Unit, onCharger: () -> Unit, onLowBatt: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val primary = MaterialTheme.colorScheme.primary
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    val context = LocalContext.current
+    val disabledGens by CrackSettings.disabledGenerators.collectAsState()
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = Color(0xFF02060A),
@@ -735,18 +735,23 @@ private fun CrackPowerSheet(
                 color = dim, fontSize = 10.sp, fontFamily = TerminalMono, lineHeight = 14.sp
             )
             Spacer(Modifier.height(12.dp))
-            Text("candidates — smart guesses before the wordlist", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
+            Text("targeted candidates — smart guesses tried before the wordlist", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
             Spacer(Modifier.height(10.dp))
             Row(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                FilterChip("targeted", targeted, primary, dim, onTargeted)
+                // One chip per registered key generator — a new generator auto-appears here.
+                KeyGenerators.registered.forEach { g ->
+                    val on = g.id !in disabledGens
+                    FilterChip(g.label, on, primary, dim) { CrackSettings.setGeneratorEnabled(context, g.id, !on) }
+                }
             }
             Spacer(Modifier.height(5.dp))
             Text(
-                "targeted — try ISP/name key guesses first: the exact SpeedTouch/Thomson\n" +
-                    "key + the network name with common variants. Off = plain wordlist run.",
+                "SpeedTouch — derive the exact SpeedTouch/Thomson key from the SSID.\n" +
+                    "name guesses — the network name + common variants (digits/years).\n" +
+                    "All off = a plain wordlist run.",
                 color = dim, fontSize = 10.sp, fontFamily = TerminalMono, lineHeight = 14.sp
             )
         }

@@ -11,6 +11,7 @@ package com.wsvdmeer.pwncompanion.crack
  */
 object EssidKeygen : KeyGenerator {
     override val id = "essid"
+    override val label = "name guesses"
 
     private val suffixes = listOf(
         "", "1", "12", "123", "1234", "12345", "123456", "0", "00", "01", "007",

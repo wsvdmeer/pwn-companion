@@ -21,6 +21,7 @@ import java.util.Locale
  */
 object ThomsonKeygen : KeyGenerator {
     override val id = "thomson"
+    override val label = "SpeedTouch"
 
     // SSID families that use this exact algorithm (all a fixed prefix + 6 hex chars).
     private val prefixes = listOf("SpeedTouch", "Thomson")
