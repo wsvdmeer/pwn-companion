@@ -140,15 +140,15 @@ object CrackEngine {
         startService(context)
         job = scope.launch {
             try {
-                if (!WordlistManager.isLoaded) {
-                    _state.value = CrackState.Downloading(0f)
-                    val ok = WordlistManager.ensure(context) { p -> _state.value = CrackState.Downloading(p) }
-                    if (!ok) {
-                        _state.value = CrackState.Failed("", "wordlist", "wordlist unavailable")
-                        _queue.value = emptyList()
-                        return@launch
-                    }
+                // Load the best wordlist available offline (bundled starter, or the fuller downloaded
+                // list once present) — the first crack works with no network. Then sync the full list
+                // in the background (download if missing, else a throttled update check).
+                if (!WordlistManager.ensureLoaded(context)) {
+                    _state.value = CrackState.Failed("", "wordlist", "wordlist unavailable")
+                    _queue.value = emptyList()
+                    return@launch
                 }
+                WordlistManager.syncFull(context)
                 // `current` is the item being worked. It's held (not re-queued) across a power
                 // pause so it resumes from its checkpoint when power returns, rather than being
                 // dropped or restarted.
