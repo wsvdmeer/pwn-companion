@@ -103,7 +103,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Networking is "armed" (the user wants it on) even when the WebSocket server isn't
     // bound yet because there's no Bluetooth tether. armed && !running = "waiting for link".
-    private val _networkingArmed = MutableStateFlow(false)
+    // Defaults to true because MainActivity auto-starts networking on every launch — so the
+    // command bar opens on "waiting for link", not a misleading "start service" flash. It only
+    // flips to false (→ "start service") after the user explicitly stops the service.
+    private val _networkingArmed = MutableStateFlow(true)
     val networkingArmed: StateFlow<Boolean> = _networkingArmed.asStateFlow()
 
     private val _connectedDeviceCount = MutableStateFlow(0)
