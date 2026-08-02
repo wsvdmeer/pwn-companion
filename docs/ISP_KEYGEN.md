@@ -81,10 +81,19 @@ Scoped but **not yet implemented** — it needs native code, not a Kotlin loop:
 - **Why native:** the serial space is `10×100×10×10000 = 100,000,000` — far too slow for Kotlin on a
   phone. Port blasty's C into `wpa_crack.c` (add MD5 + a JNI entry `upcCandidates(essid)`), and have
   a Kotlin `KeyGenerator` call it, self-checked like `NativeWpaCracker.verified`.
-- **Verify:** gate on a published `UPC…→password` vector before registering (blasty's own example
-  output, or [upcwifikeys.com](https://upcwifikeys.com/) / the deadcode.me writeup).
-- **Ziggo caveat:** blasty targets `UPC` SSIDs; `Ziggo…` is the same hardware but the SSID→serial
-  link is unconfirmed — don't claim Ziggo until there's a Ziggo vector.
+- **Verify:** gate on a canonical `UPC…→password` vector before registering. **Caveat found (2026-08):
+  "UPC" is not one algorithm.** A faithful Python port of blasty's C was cross-checked against
+  [upcwifikeys.com](https://upcwifikeys.com/) and they **disagree** — upcwifikeys' serials map to a
+  *different* SSID under blasty's `upc_generate_ssid`, i.e. it's a different device generation/variant.
+  So do NOT use upcwifikeys as the reference for a blasty port; generate the vector from blasty's own C
+  (compile it, or the Python port `scratchpad/upc.py` which reproduces its ~20 candidates). Blasty's
+  covers the older UBEE generation (declining coverage).
+- **Real-router proof required:** because there are multiple variants, reproducing blasty's canonical
+  output only proves the *port* is faithful — not that it matches the routers you'll see. Before
+  shipping, confirm a generated candidate is the **actual key of a real UPC/Ziggo capture** (known key,
+  or crackable). Shelved 2026-08 for lack of that confirmation.
+- **Ziggo caveat:** blasty targets `UPC` SSIDs; `Ziggo…` is the same brand-family but the algorithm is
+  unconfirmed and likely a different variant — don't claim Ziggo until there's a verified Ziggo vector.
 - **Get the exact source** (do NOT port from a summary — the mangle/charset steps must be exact):
   [igi64/upc_keys](https://github.com/igi64/upc_keys/blob/master/upc_keys.c) ·
   [spaze/upc_keys-lambda](https://github.com/spaze/upc_keys-lambda) ·
