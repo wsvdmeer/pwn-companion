@@ -7,18 +7,14 @@ things I'd like to do, **not promises or dates**. Issues and PRs welcome.
 
 The current focus, in no strict order:
 
-- **ISP default-key generators** ⭐ — many EU/NL home routers (Ziggo, KPN, Telfort, …) ship WPA
-  keys that are *algorithmically derived* from the ESSID/BSSID/serial, not random. A per-ISP
-  generator produces a tiny candidate set from the capture's own ESSID+MAC and cracks a large
-  slice of real networks a generic wordlist never gets — on-phone, in seconds. (Needs the per-ISP
-  algorithms; several are publicly documented/reversed.) The single biggest hit-rate win.
+- **UPC / Ziggo default-key generator** ⭐ — the highest-prevalence NL family. Like Thomson (now
+  shipped), the WPA key is *derived* from the ESSID, but the algorithm (blasty's `upc_keys`) is a
+  ~100M-iteration MD5 serial brute-force — native-scale, so it needs a JNI port into `wpa_crack.c`
+  (add MD5 + a `upcCandidates(essid)` entry), gated on a published `UPC…→key` vector like the rest.
+  Scoped on the `feature/isp-keygen` branch; the biggest remaining hit-rate win.
 - **Faster cracking — multi-lane SIMD** — hash several candidates in parallel across NEON lanes
   (4–8-way PBKDF2) on top of the ARMv8 hardware SHA-1 already in use. A large speed multiplier,
   now especially worthwhile since EAPOL (heavier per candidate) is in play.
-- **Tappable map** — tap a map dot → open that capture; filter the map by cracked/crackable. Makes
-  the geolocation view interactive instead of display-only.
-- **Settings screen** — consolidate the scattered options (intervals, wordlist, notifications,
-  cracking-power policy) into one place.
 - **More tests** — the capture merge/normalize, HuntAdvisor, and CrackEngine queue/resume are
   untested and have regressed before (timestamp units, connect-race capture drop, advisor/bandit
   divergence). A safety net for the parts that keep breaking.
@@ -34,8 +30,6 @@ The current focus, in no strict order:
 - **Wordlist picker + streaming** — choose among multiple wordlists and stream a `.gz`
   line-by-line (rockyou / HashMob) without the in-memory ceiling. Most worthwhile once cracking
   is faster.
-- **ESSID-based candidates** — try the ESSID as the password, ESSID + common suffixes, and simple
-  local patterns — near-zero cost, catches lazy real-world keys the generic list misses.
 - **"Deauth this AP" button** — let the operator target a specific untapped AP on demand, not just
   steer recon. High impact for the deauth mission; must stay behind the authorized-use guardrails.
 - **Connection-health polish** for the flaky Pi Zero BT link (clearer reconnect state).
@@ -45,6 +39,14 @@ The current focus, in no strict order:
 
 ## Recently shipped
 
+- **ISP / ESSID default-key candidates** — Thomson/SpeedTouch default-key derivation
+  (reference-vector verified: `SpeedTouchF8A3D0 → 742DA831D2`) + universal ESSID name-guesses, tried
+  before the wordlist (the "targeted" phase). Cracks a slice of real networks a generic list never
+  gets, on-phone in seconds. (UPC/Ziggo — the native-scale family — is still on the roadmap.)
+- **Slippy pixel map** — a real OSM tile map with smooth panning, discrete stepped zoom (stable
+  pixels), a phosphor pixel shader, and tap-to-open catch clusters (replaces the display-only view).
+- **Voice + settings** — 34 selectable film-world franchises (a rotation pool in Settings) and
+  per-notification toggles.
 - **On-phone EAPOL (`WPA*02`) cracking** — native (ARMv8 SHA-1) + Kotlin fallback, verified
   against the hashcat mode-22000 reference vector. Most captures are EAPOL, so this roughly
   doubles what's actually crackable on-phone.

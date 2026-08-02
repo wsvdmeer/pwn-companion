@@ -1,12 +1,15 @@
 package com.wsvdmeer.pwncompanion.crack
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Tests the [KeyGenerators] collection framework (step 1 — no real generators yet): matching,
- * WPA-length filtering, de-dup with order preserved, and isolation of a throwing generator.
+ * Tests the [KeyGenerators] collection framework (matching, WPA-length filtering, de-dup with order
+ * preserved, throwing-generator isolation) plus the registered generators [ThomsonKeygen] and
+ * [EssidKeygen], gated on reference vectors so a wrong derivation fails here instead of injecting
+ * garbage candidates into a real crack.
  */
 class KeyGeneratorTest {
 
@@ -57,7 +60,49 @@ class KeyGeneratorTest {
         assertEquals(listOf("aaaaaaaa", "bbbbbbbb"), KeyGenerators.collect(listOf(a, b), "UPC1", "x"))
     }
 
-    // The concrete generators (Thomson/SpeedTouch + ESSID) and their reference-vector tests live on
-    // the feature/isp-keygen branch — pulled from main in favour of GPU-offload cracking. The
-    // framework above stays so they can be re-registered later.
+    // ── ThomsonKeygen — reference vector ──
+    // Canonical public vector (Kevin Devine / GNUCitizen 2008): serial CP0615…109 → SHA-1
+    // 742da831d2… → SSID "SpeedTouchF8A3D0", WPA key "742DA831D2". If the serial→SHA-1→key
+    // derivation is right, cracking SSID SpeedTouchF8A3D0 must surface 742DA831D2. This gates
+    // registering the generator — a wrong port fails here instead of injecting garbage candidates.
+    @Test fun thomsonReproducesReferenceKey() {
+        val cands = ThomsonKeygen.candidates("SpeedTouchF8A3D0", "")
+        assertTrue("expected 742DA831D2 among $cands", cands.contains("742DA831D2"))
+    }
+
+    @Test fun thomsonMatchesOnlyItsOwnSsids() {
+        assertTrue(ThomsonKeygen.matches("SpeedTouchF8A3D0", ""))
+        assertTrue(ThomsonKeygen.matches("ThomsonABCDEF", ""))
+        assertFalse(ThomsonKeygen.matches("UPC1234567", ""))          // other family
+        assertFalse(ThomsonKeygen.matches("SpeedTouchZZZZZZ", ""))    // suffix not hex
+        assertFalse(ThomsonKeygen.matches("SpeedTouch", ""))          // no suffix
+    }
+
+    @Test fun thomsonEmitsWpaValidCandidates() {
+        // Every candidate is a 10-char uppercase-hex key (a valid WPA passphrase length).
+        ThomsonKeygen.candidates("SpeedTouchF8A3D0", "").forEach {
+            assertEquals(10, it.length)
+        }
+    }
+
+    // ── EssidKeygen ──
+    @Test fun essidMatchesAnyNonBlankSsid() {
+        assertTrue(EssidKeygen.matches("MyHomeWifi", ""))
+        assertFalse(EssidKeygen.matches("", "aabbccddeeff"))
+    }
+
+    @Test fun essidDerivesNameVariants() {
+        val c = EssidKeygen.candidates("HomeNet", "")
+        assertTrue("plain name", c.contains("HomeNet"))
+        assertTrue("name+123", c.contains("HomeNet123"))
+        assertTrue("name+year", c.contains("HomeNet2024"))
+        assertTrue("no-space form", EssidKeygen.candidates("My Net", "").contains("MyNet123"))
+    }
+
+    @Test fun essidThroughRegistryIsLengthFiltered() {
+        // Short SSID "abc": "abc"(3) dropped, but "abc12345"(8) etc. kept — all results 8..63.
+        KeyGenerators.collect(listOf(EssidKeygen), "abc", "").forEach {
+            assertTrue("len ${it.length}: $it", it.length in 8..63)
+        }
+    }
 }

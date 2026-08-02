@@ -7,17 +7,17 @@ import android.util.Log
  * length-filtered to WPA's 8..63 and de-duplicated, preserving order (a generator's most-likely
  * candidates first). The crack loop prepends these to the wordlist space so they're tried first.
  *
- * Empty until generators are registered in [generators]; with none, [candidatesFor] returns an
- * empty list and the crack behaves exactly as a plain wordlist run.
+ * Active generators live in [generators] (verified against reference vectors in KeyGeneratorTest).
+ * If that list is empty, [candidatesFor] returns nothing and a crack is a plain wordlist run.
  */
 object KeyGenerators {
     private const val TAG = "KeyGenerators"
 
-    /** Registered generators, in priority order. **None active on main** — the ISP/ESSID generators
-     *  live on the `feature/isp-keygen` branch (deprioritized in favour of GPU-offload cracking).
-     *  With this empty, the framework is inert: candidatesFor returns nothing, so a crack is a plain
-     *  wordlist run. Re-add generators here to switch them back on. */
-    private val generators: List<KeyGenerator> = emptyList()
+    /** Registered generators, in priority order (candidates tried before the wordlist — the "targeted"
+     *  phase). [ThomsonKeygen] derives the exact key for SpeedTouch/Thomson SSIDs (gated — fires only
+     *  on those); [EssidKeygen] adds a few name-based guesses for every network. Both are pinned to
+     *  reference vectors in KeyGeneratorTest. UPC/Ziggo stays deferred (native-scale MD5). */
+    private val generators: List<KeyGenerator> = listOf(ThomsonKeygen, EssidKeygen)
 
     /** Generated candidates for a capture (matching generators' output, 8..63 chars, de-duped). */
     fun candidatesFor(essid: String, bssid: String): List<String> {
