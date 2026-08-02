@@ -210,7 +210,10 @@ class MainActivity : ComponentActivity() {
             startForegroundService(serviceIntent)
 
             serviceIntentStarted = true
-            viewModel.setServerRunning(true)
+            // Don't optimistically flag the server "running" — it only truly binds once the
+            // Bluetooth tether (bnep0) is up. The real value flows in from the service collector;
+            // until then the command bar shows "waiting for link" (armed) instead of flashing
+            // "stop service" and snapping back.
             Log.i(tag, "CompanionBackgroundService start intent sent")
         } catch (e: Exception) {
             Log.e(tag, "Error starting service: ${e.message}", e)
