@@ -120,6 +120,7 @@ fun CapturesDetailScreen(
     val gentleCpu by CrackSettings.gentleCpu.collectAsState()
     val chargerOnly by CrackSettings.chargerOnly.collectAsState()
     val lowBatteryStop by CrackSettings.lowBatteryStop.collectAsState()
+    val targeted by CrackSettings.targeted.collectAsState()
 
     val primary = MaterialTheme.colorScheme.primary
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
@@ -345,9 +346,11 @@ fun CapturesDetailScreen(
     if (showOptions) {
         CrackPowerSheet(
             gentleCpu = gentleCpu, chargerOnly = chargerOnly, lowBatteryStop = lowBatteryStop,
+            targeted = targeted,
             onGentle = { CrackSettings.setGentleCpu(context, !gentleCpu) },
             onCharger = { CrackSettings.setChargerOnly(context, !chargerOnly) },
             onLowBatt = { CrackSettings.setLowBatteryStop(context, !lowBatteryStop) },
+            onTargeted = { CrackSettings.setTargeted(context, !targeted) },
             onDismiss = { showOptions = false },
         )
     }
@@ -695,8 +698,8 @@ private fun FiltersSheet(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CrackPowerSheet(
-    gentleCpu: Boolean, chargerOnly: Boolean, lowBatteryStop: Boolean,
-    onGentle: () -> Unit, onCharger: () -> Unit, onLowBatt: () -> Unit,
+    gentleCpu: Boolean, chargerOnly: Boolean, lowBatteryStop: Boolean, targeted: Boolean,
+    onGentle: () -> Unit, onCharger: () -> Unit, onLowBatt: () -> Unit, onTargeted: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val primary = MaterialTheme.colorScheme.primary
@@ -729,6 +732,21 @@ private fun CrackPowerSheet(
                 "easy cpu — cap at 2 cores (cooler, slower).\n" +
                     "charger only — crack only while plugged in.\n" +
                     "stop <15% — pause on low battery (unplugged).",
+                color = dim, fontSize = 10.sp, fontFamily = TerminalMono, lineHeight = 14.sp
+            )
+            Spacer(Modifier.height(12.dp))
+            Text("candidates — smart guesses before the wordlist", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterChip("targeted", targeted, primary, dim, onTargeted)
+            }
+            Spacer(Modifier.height(5.dp))
+            Text(
+                "targeted — try ISP/name key guesses first: the exact SpeedTouch/Thomson\n" +
+                    "key + the network name with common variants. Off = plain wordlist run.",
                 color = dim, fontSize = 10.sp, fontFamily = TerminalMono, lineHeight = 14.sp
             )
         }
