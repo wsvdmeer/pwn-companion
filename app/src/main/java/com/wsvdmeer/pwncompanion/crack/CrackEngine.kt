@@ -224,11 +224,11 @@ object CrackEngine {
         val quick = CrackSettings.quickCrack.value
         val mangle = CrackSettings.mangle.value
         val mult = if (mangle) MangleRules.size else 1
-        // ISP default-key candidates (Thomson/SpeedTouch/…) + ESSID name guesses derived from the
-        // ESSID/BSSID, tried BEFORE the wordlist so a matching router cracks in seconds. Opt-out via
-        // the "targeted" option; off → ispCount is 0 and the space is exactly the wordlist, as before.
+        // Targeted default-key candidates (Thomson/SpeedTouch/…) + ESSID name guesses derived from the
+        // ESSID/BSSID, tried BEFORE the wordlist so a matching router cracks in seconds. Each generator
+        // is individually toggleable; all off → ispCount is 0 and the space is exactly the wordlist.
         val ispCandidates =
-            if (CrackSettings.targeted.value) KeyGenerators.candidatesFor(capture.ssid, bssid) else emptyList()
+            KeyGenerators.candidatesFor(capture.ssid, bssid) { id -> CrackSettings.isGeneratorEnabled(context, id) }
         val ispCount = ispCandidates.size.toLong()
         // Candidate space: quick uses only the top-N words; full uses all. Mangling expands each word
         // into MangleRules.size variants. Total = ispCount + wordCount × mult (also drives the ETA).

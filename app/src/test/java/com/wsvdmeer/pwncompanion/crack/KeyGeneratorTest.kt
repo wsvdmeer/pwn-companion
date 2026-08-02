@@ -16,6 +16,7 @@ class KeyGeneratorTest {
     private fun gen(genId: String, match: Boolean, cands: List<String>, throws: Boolean = false) =
         object : KeyGenerator {
             override val id = genId
+            override val label = genId
             override fun matches(essid: String, bssid: String) = match
             override fun candidates(essid: String, bssid: String): List<String> {
                 if (throws) error("boom")

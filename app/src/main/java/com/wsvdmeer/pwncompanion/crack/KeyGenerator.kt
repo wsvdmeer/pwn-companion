@@ -8,17 +8,21 @@ package com.wsvdmeer.pwncompanion.crack
  * derived* from the ESSID/BSSID, not random — so a handful of generated candidates crack them in
  * seconds, before the wordlist is ever touched. The crack loop tries [candidates] first.
  *
- * **Framework only for now — no generators ship yet.** Each implementation MUST:
+ * Each implementation MUST:
  *  - only use inputs the app actually has over the air (ESSID + BSSID); anything needing a serial
  *    number is out of scope, and
  *  - be verified against a known `(ESSID, BSSID) → key` reference before shipping (see the tests) —
  *    a wrong generator just injects garbage candidates.
  *
- * Register implementations in [KeyGenerators].
+ * Register implementations in [KeyGenerators]; each becomes an individually toggleable option in the
+ * crack [ options ] sheet (via its [id]/[label]).
  */
 interface KeyGenerator {
-    /** Short id for logging/debug, e.g. "upc" / "thomson". */
+    /** Short id for logging/debug + the persisted enabled/disabled key, e.g. "upc" / "thomson". */
     val id: String
+
+    /** Short user-facing name for the crack-options chip, e.g. "SpeedTouch" / "name guesses". */
+    val label: String
 
     /** True if this generator applies to the capture — matched by ESSID pattern and/or BSSID OUI. */
     fun matches(essid: String, bssid: String): Boolean

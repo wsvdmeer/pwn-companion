@@ -19,10 +19,14 @@ object KeyGenerators {
      *  reference vectors in KeyGeneratorTest. UPC/Ziggo stays deferred (native-scale MD5). */
     private val generators: List<KeyGenerator> = listOf(ThomsonKeygen, EssidKeygen)
 
-    /** Generated candidates for a capture (matching generators' output, 8..63 chars, de-duped). */
-    fun candidatesFor(essid: String, bssid: String): List<String> {
-        val out = collect(generators, essid, bssid)
-        if (out.isNotEmpty()) Log.i(TAG, "${out.size} ISP candidate(s) for ${essid.ifBlank { bssid }}")
+    /** The registered generators, for the UI to render one enable/disable chip each. */
+    val registered: List<KeyGenerator> get() = generators
+
+    /** Generated candidates for a capture (matching generators' output, 8..63 chars, de-duped).
+     *  [enabled] filters generators by id so each can be toggled off in the crack options. */
+    fun candidatesFor(essid: String, bssid: String, enabled: (String) -> Boolean = { true }): List<String> {
+        val out = collect(generators.filter { enabled(it.id) }, essid, bssid)
+        if (out.isNotEmpty()) Log.i(TAG, "${out.size} targeted candidate(s) for ${essid.ifBlank { bssid }}")
         return out
     }
 
