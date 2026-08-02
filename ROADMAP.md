@@ -39,6 +39,9 @@ The current focus, in no strict order:
 
 ## Recently shipped
 
+- **Offline starter wordlist + auto-update** — a compact bundled list (~21K WPA-relevant words) loads
+  with no network, so the first crack works out of the box; the full pwncrack list downloads in the
+  background and refreshes via a throttled conditional GET (~once a day) when it changes.
 - **ISP / ESSID default-key candidates** — Thomson/SpeedTouch default-key derivation
   (reference-vector verified: `SpeedTouchF8A3D0 → 742DA831D2`) + universal ESSID name-guesses, tried
   before the wordlist (the "targeted" phase). Cracks a slice of real networks a generic list never
