@@ -25,6 +25,12 @@ The current focus, in no strict order:
 
 ## Backlog / ideas
 
+- **GPU-offload bridge (`pwnbridge`)** — a small cross-platform CLI (single self-contained binary for
+  Windows/Linux/macOS) that runs on a PC with a GPU: the phone sends a capture's `22000` hash over the
+  LAN, the PC cracks it with hashcat (millions/s vs the phone's hundreds) using the operator's full
+  wordlist + rules, and the result auto-returns to the app and marks the network cracked. Batch mode
+  fires the whole uncracked backlog in one hashcat run. Designed + parked (a reference Python agent
+  lives on `feature/pc-bridge`); the "copy hash" button is the zero-setup manual precursor.
 - **Wordlist picker + streaming** — choose among multiple wordlists and stream a `.gz`
   line-by-line (rockyou / HashMob) without the in-memory ceiling. Most worthwhile once cracking
   is faster.
