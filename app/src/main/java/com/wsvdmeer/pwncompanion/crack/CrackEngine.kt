@@ -223,7 +223,7 @@ object CrackEngine {
         val cores = workerCores(context)
         val quick = CrackSettings.quickCrack.value
         val mangle = CrackSettings.mangle.value
-        val mult = if (mangle) MangleRules.size else 1
+        val mult = CrackSpace.mult(mangle)
         // Targeted default-key candidates (Thomson/SpeedTouch/…) + ESSID name guesses derived from the
         // ESSID/BSSID, tried BEFORE the wordlist so a matching router cracks in seconds. Each generator
         // is individually toggleable; all off → ispCount is 0 and the space is exactly the wordlist.
@@ -232,14 +232,13 @@ object CrackEngine {
         val ispCount = ispCandidates.size.toLong()
         // Candidate space: quick uses only the top-N words; full uses all. Mangling expands each word
         // into MangleRules.size variants. Total = ispCount + wordCount × mult (also drives the ETA).
-        val wordCount = if (quick) minOf(QUICK_LIMIT, words.size.toLong()) else words.size.toLong()
-        val limit = ispCount + wordCount * mult
+        val wordCount = CrackSpace.wordCount(quick, words.size.toLong(), QUICK_LIMIT)
+        val limit = CrackSpace.limit(ispCount, wordCount, mult)
 
         // Resume (full only): the checkpoint is tagged with the wordlist + mangle factor, so toggling
         // mangle (which changes what each index means) invalidates a stale checkpoint instead of
         // resuming into the wrong candidate. One monotonic cursor → everything below is done.
-        val wordlistId = WordlistManager.identity() +
-            (if (mangle) "+m$mult" else "") + (if (ispCount > 0) "+isp$ispCount" else "")
+        val wordlistId = CrackSpace.wordlistId(WordlistManager.identity(), mangle, mult, ispCount)
         val startIndex = if (quick) 0L else loadCheckpoint(context, key, wordlistId).coerceIn(0L, limit)
         val cursor = AtomicLong(startIndex)
         val tried = AtomicLong(startIndex)
@@ -251,23 +250,14 @@ object CrackEngine {
         // Map a flat candidate index to its passphrase. The first [ispCount] indices are the ISP
         // default-key candidates (tried as-is, no mangling); beyond that it's the wordlist space —
         // word = (idx-ispCount) / mult, rule = (idx-ispCount) % mult.
-        fun candidateAt(idx: Long): String {
-            if (idx < ispCount) return ispCandidates[idx.toInt()]
-            val w = idx - ispCount
-            val word = words[(w / mult).toInt()]
-            return if (mangle) MangleRules.apply(word, (w % mult).toInt()) else word
-        }
+        fun candidateAt(idx: Long): String =
+            CrackSpace.candidateAt(idx, ispCount, ispCandidates, words, mangle, mult)
         // Human-readable "what · how · which options" for the progress banner, e.g.
         // "eapol · native · mangle". quick/mangle are locked in for this run, so snapshot them here.
-        val mode = buildString {
-            append(if (pmkidH != null) "pmkid" else "eapol")
-            append(" · ").append(if (useNative) "native" else "cpu")
-            if (quick) append(" · quick")
-            if (mangle) append(" · mangle")
-        }
+        val mode = CrackSpace.mode(pmkidH != null, useNative, quick, mangle)
         // Which segment the cursor is in right now: the first ispCount candidates are the targeted
         // guesses (ISP default keys + ESSID variants), the rest is the wordlist.
-        fun phaseAt(n: Long): String = if (n < ispCount) "targeted" else "wordlist"
+        fun phaseAt(n: Long): String = CrackSpace.phaseAt(n, ispCount)
         _state.value = CrackState.Running(bssid, ssid, startIndex, limit, 0, mode, phaseAt(startIndex))
         if (!quick && startIndex > 0) Log.i(TAG, "resuming $ssid from $startIndex/$limit")
         Log.i(TAG, "cracking $ssid: ${if (quick) "quick" else "full"}, $cores workers, " +

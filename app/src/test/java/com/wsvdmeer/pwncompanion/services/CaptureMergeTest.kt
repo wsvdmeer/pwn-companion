@@ -41,6 +41,20 @@ class CaptureMergeTest {
         assertEquals("NEW", CaptureMerge.merge(existing, incoming).single().hash22000)
     }
 
+    @Test fun carriesPasswordWhileFresherHashStillWins() {
+        // Mixed case: a re-scan brings a NEW hash but no password — keep the new hash, carry the pw.
+        val existing = listOf(cap("aa", pw = "secret", hash = "OLD"))
+        val incoming = listOf(cap("aa", hash = "NEW"))
+        val merged = CaptureMerge.merge(existing, incoming).single()
+        assertEquals("secret", merged.password)   // cracked pw preserved
+        assertEquals("NEW", merged.hash22000)      // fresher hash still wins
+    }
+
+    @Test fun normalizeBoundaryOnlyDividesTrueMillis() {
+        assertEquals(100_000_000_000L, CaptureMerge.normalizeTs(100_000_000_000L))     // == threshold: kept
+        assertEquals(100_000_000L, CaptureMerge.normalizeTs(100_000_000_001L))          // just over: ms → s
+    }
+
     @Test fun dedupesByBssidAndSortsNewestFirst() {
         val existing = listOf(cap("aa", ts = 50))
         val incoming = listOf(cap("bb", ts = 300), cap("aa", ts = 100))
