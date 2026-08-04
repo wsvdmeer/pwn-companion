@@ -7,17 +7,21 @@ things I'd like to do, **not promises or dates**. Issues and PRs welcome.
 
 The current focus, in no strict order:
 
-- **UPC / Ziggo default-key generator** ⭐ — the highest-prevalence NL family. Like Thomson (now
-  shipped), the WPA key is *derived* from the ESSID, but the algorithm (blasty's `upc_keys`) is a
-  ~100M-iteration MD5 serial brute-force — native-scale, so it needs a JNI port into `wpa_crack.c`
-  (add MD5 + a `upcCandidates(essid)` entry), gated on a published `UPC…→key` vector like the rest.
-  Scoped on the `feature/isp-keygen` branch; the biggest remaining hit-rate win.
-- **More tests** — the capture merge/normalize, HuntAdvisor, and CrackEngine queue/resume are
-  untested and have regressed before (timestamp units, connect-race capture drop, advisor/bandit
-  divergence). A safety net for the parts that keep breaking.
+- **More tests (partly done)** — capture merge/normalize, HuntAdvisor, and the CrackEngine
+  candidate-space math (`CrackSpace`) are now covered. What's left is CrackEngine's **queue +
+  checkpoint I/O** (enqueue/dedup, resume position), which needs Robolectric or a Context fake — a
+  bigger lift than the pure-logic tests.
+- **Connection-health polish** — clearer reconnect state for the flaky Pi Zero BT link. Drops
+  mid-session are common; the real fix is a USB Wi-Fi adapter, but the app can surface the state better.
 
 ## Backlog / ideas
 
+- **UPC / Ziggo default-key generator** — the highest-prevalence NL family, but **parked pending a
+  real-router vector** (2026-08). "UPC" turned out to be *several* device variants (blasty's `upc_keys`
+  ≠ upcwifikeys.com's algorithm), so reproducing one only proves the port is faithful — not that it
+  matches the routers you'll actually see. Blocked on confirming a generated candidate is the real key
+  of a live UPC/Ziggo capture. When unblocked: native JNI port of blasty's C into `wpa_crack.c` (add
+  MD5 + `upcCandidates(essid)`), gated on that vector. Notes on `feature/isp-keygen` + `ISP_KEYGEN.md`.
 - **GPU-offload bridge (`pwnbridge`)** — a small cross-platform CLI (single self-contained binary for
   Windows/Linux/macOS) that runs on a PC with a GPU: the phone sends a capture's `22000` hash over the
   LAN, the PC cracks it with hashcat (millions/s vs the phone's hundreds) using the operator's full
@@ -27,8 +31,6 @@ The current focus, in no strict order:
 - **Wordlist picker + streaming** — choose among multiple wordlists and stream a `.gz`
   line-by-line (rockyou / HashMob) without the in-memory ceiling. Most worthwhile once cracking
   is faster.
-- **"Deauth this AP" button** — let the operator target a specific untapped AP on demand, not just
-  steer recon. High impact for the deauth mission; must stay behind the authorized-use guardrails.
 - **Multi-lane SIMD cracking (low priority — probably not worth it)** — 4–8-way NEON SHA-1 to hash
   several candidates per pass. Deprioritized: we already use the ARMv8 SHA-1 **crypto extension**, and
   a single-lane hardware hash typically matches or beats 4-way *software* NEON on modern cores (which
@@ -36,10 +38,13 @@ The current focus, in no strict order:
   phones we target is small for a lot of fiddly native code. The real speed levers are cheaper:
   **using more cores** (the "easy cpu" toggle caps at 2 for a cool phone) and the **GPU-offload bridge**
   above. Revisit only if targeting cores *without* hardware SHA-1.
-- **Connection-health polish** for the flaky Pi Zero BT link (clearer reconnect state).
 - **Multi-pwnagotchi** support (more than one device at once).
 - **R8 / minify** for release builds, with tested keep-rules for kotlinx-serialization + Compose.
 - Refreshed screenshots showing the current on-phone cracking + captures UI.
+
+*Considered and dropped: a manual "deauth this AP" button — it only makes sense for untapped APs, and
+the pwnagotchi already auto-deauths everything it sees while the app steers channel priority, so a
+per-AP button just duplicates the autonomy.*
 
 ## Recently shipped
 
