@@ -628,6 +628,8 @@ class NetworkService(private val context: Context) {
                     wpaSecEnabled = data.wpaSecEnabled ?: currentState.wpaSecEnabled,
                     wpaSecOnline = data.wpaSecOnline ?: currentState.wpaSecOnline,
                     captureFileCount = data.totalFiles ?: currentState.captureFileCount,
+                    // e-ink invert flag (from status) — drives normalising a light face to dark.
+                    uiInvert = data.uiInvert ?: currentState.uiInvert,
                 )
                 states.toMutableMap().apply { put(deviceId, updatedState) }
             }

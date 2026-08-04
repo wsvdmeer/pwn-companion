@@ -157,6 +157,17 @@ show_on_screen = true        # draw the connection/GPS status on the e-ink scree
 # altitude_position  = [0, 102]
 ```
 
+> **Turn off the `auto-tune` plugin if you run PwnCompanion.** The app's advisor already collects
+> per-channel stats and steers Wi-Fi recon toward the busiest channels *live* (see
+> [Deauth Advisor](#deauth-advisor--where-to-hunt-next)). The community `auto-tune` plugin does the
+> same job from the Pi side, so running both makes them fight over `personality.channels`. Disable it
+> and let the app be the single authority:
+> ```toml
+> [main.plugins.auto-tune]
+> enabled = false
+> ```
+> The app doesn't depend on auto-tune — the only thing lost is an optional `min_rssi` readout.
+
 **Optional — cracking via [wpa-sec](https://wpa-sec.stanev.org)** (free community cracking; needs an API key):
 ```toml
 [main.plugins.wpa-sec]

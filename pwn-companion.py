@@ -2471,6 +2471,16 @@ class PwnCompanion(Plugin):
         except Exception:
             return None, None
 
+    def _ui_invert(self):
+        """Whether the e-ink is inverted (black-on-white / 'light'), read from the live
+        pwnagotchi config. The app mirrors the web /ui screenshot — which honours this —
+        so it uses the flag to normalise a light face onto its dark console. Default False."""
+        try:
+            import pwnagotchi
+            return bool((pwnagotchi.config or {}).get("ui", {}).get("invert", False))
+        except Exception:
+            return False
+
     def _wpa_sec_api_url(self):
         try:
             import pwnagotchi
@@ -2518,6 +2528,7 @@ class PwnCompanion(Plugin):
             "wpa_sec_enabled": ws_enabled,
             "wpa_sec_download": ws_download,
             "wpa_sec_online": getattr(self, "_wpa_sec_online", None),
+            "ui_invert": self._ui_invert(),
             "timestamp": int(time.time()),
         }
         # Advance the mode dedupe only if the status (which carries pwnagotchi_mode)
