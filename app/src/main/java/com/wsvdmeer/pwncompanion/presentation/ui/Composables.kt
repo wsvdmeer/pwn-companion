@@ -434,14 +434,9 @@ fun MainContentArea(
                 // (the persistent franchise drives every line on screen right now).
                 val voiceWorld by pwnagotchiVM.franchiseLabel.collectAsState()
                 if (voiceWorld.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(3.dp))
-                    Text(
-                        "‹ ${voiceWorld.lowercase()} ›",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.sp, lineHeight = 14.sp,
-                        maxLines = 1, textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    // Left-aligned green header, same style as the section labels below.
+                    ConsoleLabel("[ $voiceWorld ]")
                 }
                 Spacer(modifier = Modifier.height(8.dp))
             }
@@ -469,7 +464,12 @@ fun MainContentArea(
         // reads as idle-and-alive rather than a screen of empty sections. ──
         if (connectedDevices.isEmpty()) {
             item {
-                ConsoleStandbyBlock(networkingArmed = networkingArmed)
+                val world by pwnagotchiVM.franchiseLabel.collectAsState()
+                ConsoleStandbyBlock(
+                    networkingArmed = networkingArmed,
+                    world = world,
+                    nextIdleLine = { pwnagotchiVM.idleLine() },
+                )
                 ConsoleRule()
             }
         }
@@ -580,14 +580,17 @@ fun MainContentArea(
 
         // ── settings ─────────────────────────────────────────────
         item {
-            Text(
-                "[ settings ]",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 12.sp, fontFamily = TerminalMono,
+            // Same header pattern as [ captures ] / [ LOG ]: green label + "details ›".
+            Row(
                 modifier = Modifier
+                    .fillMaxWidth()
                     .clickable { mainViewModel.openDetail(com.wsvdmeer.pwncompanion.presentation.DetailScreen.SETTINGS) }
-                    .padding(vertical = 6.dp)
-            )
+                    .padding(vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                ConsoleLabel("[ settings ]")
+                Text("details ›", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+            }
             ConsoleRule()
         }
 
@@ -815,21 +818,22 @@ private fun ConsoleSteeringBlock(
  * reads as idle-and-alive rather than a page of empty sections.
  */
 @Composable
-private fun ConsoleStandbyBlock(networkingArmed: Boolean) {
+private fun ConsoleStandbyBlock(
+    networkingArmed: Boolean,
+    world: String = "",
+    nextIdleLine: () -> String = { "" },
+) {
     val primary = MaterialTheme.colorScheme.primary
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     val tertiary = MaterialTheme.colorScheme.tertiary
+    val onSurface = MaterialTheme.colorScheme.onSurface
 
-    val quips = listOf(
-        "the spectrum's quiet… for now.",
-        "sharpening my fangs.",
-        "no signal is safe.",
-        "waiting to hunt.",
-        "dreaming of handshakes.",
-    )
-    var qi by remember { mutableStateOf(0) }
+    // The pet keeps talking while unlinked: a slowly-rotating in-character "idle" line from the
+    // current franchise (falls back to a generic quip if the voice pool isn't ready yet).
+    val fallback = "waiting to hunt."
+    var line by remember { mutableStateOf(nextIdleLine().ifBlank { fallback }) }
     LaunchedEffect(Unit) {
-        while (true) { delay(4500); qi = (qi + 1) % quips.size }
+        while (true) { delay(5000); line = nextIdleLine().ifBlank { fallback } }
     }
 
     Column {
@@ -837,7 +841,10 @@ private fun ConsoleStandbyBlock(networkingArmed: Boolean) {
         Spacer(modifier = Modifier.height(6.dp))
         Text("(⌐■_■)  zzz", color = primary, fontSize = 18.sp, lineHeight = 22.sp)
         Spacer(modifier = Modifier.height(6.dp))
-        Text(quips[qi], color = dim, fontSize = 12.sp, lineHeight = 18.sp)
+        Text("\"$line\"", color = onSurface, fontSize = 12.sp, lineHeight = 18.sp)
+        if (world.isNotBlank()) {
+            Text("[ ${world.lowercase()} ]", color = dim, fontSize = 10.sp, lineHeight = 14.sp)
+        }
         Spacer(modifier = Modifier.height(6.dp))
         Text(
             if (networkingArmed) "○ waiting for the Bluetooth tether…" else "○ no pwnagotchi linked",

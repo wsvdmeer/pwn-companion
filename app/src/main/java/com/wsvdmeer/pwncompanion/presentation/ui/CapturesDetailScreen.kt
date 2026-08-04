@@ -995,11 +995,11 @@ private fun CrackBanner(
     }
 }
 
-/** A terminal-style toggle chip: `[x] label` when on, `[ ] label` when off. */
+/** A terminal-style toggle chip: `[■] label` when on, `[ ] label` when off. */
 @Composable
 private fun FilterChip(label: String, on: Boolean, primary: Color, dim: Color, onToggle: () -> Unit) {
     Text(
-        if (on) "[x] $label" else "[ ] $label",
+        if (on) "[■] $label" else "[ ] $label",
         color = if (on) primary else dim,
         fontSize = 12.sp,
         fontFamily = TerminalMono,
