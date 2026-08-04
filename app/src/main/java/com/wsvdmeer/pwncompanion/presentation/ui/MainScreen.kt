@@ -107,8 +107,19 @@ fun MainAppContent(viewModel: MainViewModel) {
             com.wsvdmeer.pwncompanion.presentation.DetailScreen.SETTINGS ->
                 SettingsScreen(
                     paddingValues = paddingValues,
-                    onBack = { viewModel.closeDetail() }
+                    onBack = { viewModel.closeDetail() },
+                    onOpenVoiceLines = { viewModel.openVoiceLines(it) },
                 )
+            com.wsvdmeer.pwncompanion.presentation.DetailScreen.VOICE -> {
+                val franchise by viewModel.voiceLinesFranchise.collectAsState()
+                franchise?.let {
+                    FranchiseLinesScreen(
+                        franchise = it,
+                        paddingValues = paddingValues,
+                        onBack = { viewModel.closeVoiceLines() },
+                    )
+                }
+            }
             else -> MainContentArea(
                 paddingValues = paddingValues,
                 mainViewModel = viewModel,

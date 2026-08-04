@@ -34,6 +34,8 @@ data class DeviceState(
     val wpaSecOnline: Boolean? = null,
     /** Raw handshake-file count on the device (pre BSSID-dedup); null = unknown. */
     val captureFileCount: Int? = null,
+    /** Whether the device e-ink is inverted (light / black-on-white); false = dark (default). */
+    val uiInvert: Boolean = false,
 ) {
     enum class ConnectionState {
         DISCOVERING,

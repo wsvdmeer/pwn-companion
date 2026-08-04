@@ -333,16 +333,19 @@ fun LearningDetailScreen(viewModel: MainViewModel, paddingValues: PaddingValues,
     }
 }
 
-/** Settings — notification toggles (extensible). Terminal-styled like the other detail screens. */
+/** Settings — notification toggles + the voice rotation list. Terminal-styled like the other
+ *  detail screens. Tapping a franchise opens its line list via [onOpenVoiceLines]. */
 @Composable
-fun SettingsScreen(paddingValues: PaddingValues, onBack: () -> Unit) {
+fun SettingsScreen(
+    paddingValues: PaddingValues,
+    onBack: () -> Unit,
+    onOpenVoiceLines: (Franchise) -> Unit,
+) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
     LaunchedEffect(Unit) { NotifSettings.ensureLoaded(context); VoiceSettings.ensureLoaded(context) }
     val onCatch by NotifSettings.onCatch.collectAsState()
     val onCracked by NotifSettings.onCracked.collectAsState()
-    val enabledSet by VoiceSettings.enabled.collectAsState()
-    val allOn = enabledSet.size == Franchise.entries.size
     val primary = MaterialTheme.colorScheme.primary
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     val onSurface = MaterialTheme.colorScheme.onSurface
@@ -373,16 +376,41 @@ fun SettingsScreen(paddingValues: PaddingValues, onBack: () -> Unit) {
         SettingToggle("password cracked", onCracked, primary, dim, onSurface) { NotifSettings.setOnCracked(context, !onCracked) }
 
         Spacer(Modifier.height(16.dp))
-        Text("[ VOICE ]", color = primary, fontWeight = FontWeight.Bold, fontSize = 12.sp, letterSpacing = 2.sp, fontFamily = TerminalMono)
-        Text("franchises in rotation", color = dim, fontSize = 10.sp, fontFamily = TerminalMono)
-        Spacer(Modifier.height(4.dp))
-        SettingToggle("all franchises", allOn, primary, dim, onSurface) { VoiceSettings.setAll(context, !allOn) }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
-        Franchise.entries.sortedBy { it.label.lowercase() }.forEach { f ->
-            val on = f.name in enabledSet
-            FranchiseRow(f, on, primary, dim, onSurface) { VoiceSettings.setEnabled(context, f, !on) }
-        }
+        VoiceRotationSection(showTitle = true, onOpenLines = onOpenVoiceLines)
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+/**
+ * The voice rotation + line browser shared by [SettingsScreen] and [VoiceDetailScreen]: the
+ * per-franchise `[■]` toggle (rotation membership) and tap-to-expand corpus lines, plus the
+ * "all franchises" master toggle. Self-contained (reads [VoiceSettings]); emit inside a Column.
+ * [showTitle] draws the "[ VOICE ]" heading (Settings) — off when the page header already shows it.
+ */
+@Composable
+fun VoiceRotationSection(showTitle: Boolean = true, onOpenLines: (Franchise) -> Unit) {
+    val context = LocalContext.current
+    LaunchedEffect(Unit) { VoiceSettings.ensureLoaded(context) }
+    val enabledSet by VoiceSettings.enabled.collectAsState()
+    val allOn = enabledSet.size == Franchise.entries.size
+    val primary = MaterialTheme.colorScheme.primary
+    val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    val onSurface = MaterialTheme.colorScheme.onSurface
+
+    if (showTitle) {
+        Text("[ VOICE ]", color = primary, fontWeight = FontWeight.Bold, fontSize = 12.sp, letterSpacing = 2.sp, fontFamily = TerminalMono)
+    }
+    Text("franchises in rotation · tap a name for its lines", color = dim, fontSize = 10.sp, fontFamily = TerminalMono)
+    Spacer(Modifier.height(4.dp))
+    SettingToggle("all franchises", allOn, primary, dim, onSurface) { VoiceSettings.setAll(context, !allOn) }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+    Franchise.entries.sortedBy { it.label.lowercase() }.forEach { f ->
+        val on = f.name in enabledSet
+        FranchiseRow(
+            f, on, primary, dim, onSurface,
+            onToggle = { VoiceSettings.setEnabled(context, f, !on) },
+            onOpenLines = { onOpenLines(f) },
+        )
     }
 }
 
@@ -407,9 +435,7 @@ private val CORPUS_CATEGORIES = listOf(
 
 /**
  * One franchise in the voice-rotation list. The `[■]`/`[ ]` toggle includes it in the rotation
- * (tap the box); tapping the label/`lines ›` expands the actual corpus lines it contributes,
- * grouped by category, so you can read exactly what each world says before pinning it. Lines are
- * shown as-authored — the `[NETWORK]`/`[CAPTURES]`/… slots are filled with live data at runtime.
+ * (tap the box); tapping the label / `lines ›` opens that franchise's full line list on its own page.
  */
 @Composable
 private fun FranchiseRow(
@@ -419,58 +445,102 @@ private fun FranchiseRow(
     dim: Color,
     onSurface: Color,
     onToggle: () -> Unit,
+    onOpenLines: () -> Unit,
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Box toggles rotation membership…
+        Text(
+            if (on) "[■]" else "[ ]", color = if (on) primary else dim,
+            fontSize = 14.sp, fontFamily = TerminalMono,
+            modifier = Modifier.clickable { onToggle() },
+        )
+        Spacer(Modifier.width(10.dp))
+        // …the label + chevron open the franchise's line list.
+        Text(
+            franchise.label, color = onSurface, fontSize = 13.sp, fontFamily = TerminalMono,
+            modifier = Modifier.weight(1f).clickable { onOpenLines() },
+        )
+        Text(
+            "lines ›", color = dim, fontSize = 11.sp,
+            fontFamily = TerminalMono, modifier = Modifier.clickable { onOpenLines() },
+        )
+    }
+}
+
+/**
+ * Every line a franchise can say, grouped by category — the reusable body of the franchise-lines
+ * detail. Lines are shown as-authored: the `[NETWORK]`/`[CAPTURES]`/… slots are filled with live
+ * data at runtime.
+ */
+@Composable
+private fun FranchiseLines(franchise: Franchise, primary: Color, dim: Color, onSurface: Color) {
+    val byCat = BlendedVoice.corpus[franchise]
     Column(Modifier.fillMaxWidth()) {
-        Row(
-            Modifier.fillMaxWidth().padding(vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // Box toggles rotation membership…
-            Text(
-                if (on) "[■]" else "[ ]", color = if (on) primary else dim,
-                fontSize = 14.sp, fontFamily = TerminalMono,
-                modifier = Modifier.clickable { onToggle() },
-            )
-            Spacer(Modifier.width(10.dp))
-            // …the label + chevron reveal the lines.
-            Text(
-                franchise.label, color = onSurface, fontSize = 13.sp, fontFamily = TerminalMono,
-                modifier = Modifier.weight(1f).clickable { expanded = !expanded },
-            )
-            Text(
-                if (expanded) "▾ lines" else "lines ›", color = dim, fontSize = 11.sp,
-                fontFamily = TerminalMono, modifier = Modifier.clickable { expanded = !expanded },
-            )
-        }
-        if (expanded) {
-            val byCat = BlendedVoice.corpus[franchise]
-            Column(Modifier.fillMaxWidth().padding(start = 24.dp, bottom = 8.dp)) {
-                if (byCat == null) {
-                    // No curated corpus for this franchise — it falls back to its examples.
-                    Text("examples", color = primary, fontSize = 10.sp, fontFamily = TerminalMono)
-                    franchise.examples.forEach { line ->
+        if (byCat == null) {
+            // No curated corpus for this franchise — it falls back to its examples.
+            Spacer(Modifier.height(10.dp))
+            Text("examples", color = primary, fontSize = 10.sp, letterSpacing = 2.sp, fontFamily = TerminalMono)
+            franchise.examples.forEach { line ->
+                Text(
+                    "· $line", color = onSurface.copy(alpha = 0.9f), fontSize = 13.sp,
+                    lineHeight = 18.sp, fontFamily = TerminalMono,
+                )
+            }
+        } else {
+            CORPUS_CATEGORIES.forEach { cat ->
+                val lines = byCat[cat].orEmpty()
+                if (lines.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(cat, color = primary, fontSize = 10.sp, letterSpacing = 2.sp, fontFamily = TerminalMono)
+                    Spacer(Modifier.height(2.dp))
+                    lines.forEach { line ->
                         Text(
-                            "· $line", color = onSurface.copy(alpha = 0.85f), fontSize = 12.sp,
-                            lineHeight = 16.sp, fontFamily = TerminalMono,
+                            "· $line", color = onSurface.copy(alpha = 0.9f), fontSize = 13.sp,
+                            lineHeight = 18.sp, fontFamily = TerminalMono,
                         )
-                    }
-                } else {
-                    CORPUS_CATEGORIES.forEach { cat ->
-                        val lines = byCat[cat].orEmpty()
-                        if (lines.isNotEmpty()) {
-                            Spacer(Modifier.height(6.dp))
-                            Text(cat, color = primary, fontSize = 10.sp, fontFamily = TerminalMono)
-                            lines.forEach { line ->
-                                Text(
-                                    "· $line", color = onSurface.copy(alpha = 0.85f), fontSize = 12.sp,
-                                    lineHeight = 16.sp, fontFamily = TerminalMono,
-                                )
-                            }
-                        }
                     }
                 }
             }
         }
+    }
+}
+
+/**
+ * Full-screen detail for ONE franchise: every line it can say, grouped by category, plus its cue.
+ * Opened from the console's [ VOICE ] header (the current voice) and from each row in Settings.
+ */
+@Composable
+fun FranchiseLinesScreen(franchise: Franchise, paddingValues: PaddingValues, onBack: () -> Unit) {
+    BackHandler(onBack = onBack)
+    val primary = MaterialTheme.colorScheme.primary
+    val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(paddingValues)
+            .padding(horizontal = 12.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text(
+                "[ BACK ]", color = primary, fontWeight = FontWeight.Bold, fontSize = 15.sp,
+                fontFamily = TerminalMono, modifier = Modifier.clickable { onBack() }
+            )
+            Text("[ VOICE ]", color = primary, fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = TerminalMono)
+        }
+        Spacer(Modifier.height(6.dp))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+        Spacer(Modifier.height(12.dp))
+        Text(franchise.label, color = onSurface, fontSize = 15.sp, fontWeight = FontWeight.Bold, fontFamily = TerminalMono)
+        Spacer(Modifier.height(2.dp))
+        Text(franchise.cue, color = dim, fontSize = 11.sp, lineHeight = 15.sp, fontFamily = TerminalMono)
+        FranchiseLines(franchise, primary, dim, onSurface)
+        Spacer(Modifier.height(24.dp))
     }
 }

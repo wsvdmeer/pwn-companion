@@ -123,6 +123,11 @@ data class ScreenData(
     @SerialName("wpa_sec_download") val wpaSecDownload: Boolean? = null,
     @SerialName("wpa_sec_online")   val wpaSecOnline: Boolean? = null,
 
+    // Whether the device's e-ink is inverted (black-on-white / 'light'), from its config —
+    // the app mirrors the web /ui screenshot which honours this, so it normalises a light
+    // face onto the dark console. null = unknown yet.
+    @SerialName("ui_invert")        val uiInvert: Boolean? = null,
+
     // ── capture history (geolocated handshakes) ──────────────────────────────
     @SerialName("captures")
     val captures: List<CaptureEntry>? = null,

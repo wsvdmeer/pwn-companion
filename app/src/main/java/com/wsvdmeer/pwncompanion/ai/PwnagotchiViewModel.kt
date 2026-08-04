@@ -250,9 +250,16 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
     private fun curatedLine(category: String, network: String? = null): String =
         fillSlots(BlendedVoice.linesFor(currentFranchise(), category).random(), network)
 
-    /** An in-character "idle" line from the current franchise — used by the standby (disconnected)
-     *  screen so the console still talks while no pwnagotchi is linked. */
-    fun idleLine(): String = curatedLine("idle")
+    /** A rotating idle voice for the standby (disconnected) screen. Unlike the active voice — which
+     *  pins ONE franchise to a mood — the standby screen has no mood to flip, so it would otherwise
+     *  stick on the startup pick forever. Here we sample a fresh franchise from the enabled pool each
+     *  call, so a long wait cycles through worlds (or stays put if only one franchise is pinned).
+     *  Returns (franchise label, filled idle line). */
+    fun idleVoice(): Pair<String, String> {
+        val pool = VoiceSettings.activePool(appContext).ifEmpty { BlendedVoice.franchises }
+        val f = pool.random()
+        return f.label to fillSlots(BlendedVoice.linesFor(f, "idle").random())
+    }
 
     /** Map a WifiEvent to a corpus category (handshake/assoc/deauth/idle/excited/weary/normal). */
     private fun corpusCategory(event: WifiEvent): String = when (event.type) {

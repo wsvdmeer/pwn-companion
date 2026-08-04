@@ -429,14 +429,16 @@ fun MainContentArea(
         item { Spacer(modifier = Modifier.height(8.dp)) }
         if (currentImageData != null) {
             item {
-                RawDeviceImage(currentImageData)
+                RawDeviceImage(currentImageData, invert = device?.uiInvert == true)
                 // Caption the mirrored e-ink with the film-world the current quote is from
                 // (the persistent franchise drives every line on screen right now).
                 val voiceWorld by pwnagotchiVM.franchiseLabel.collectAsState()
                 if (voiceWorld.isNotBlank()) {
                     Spacer(modifier = Modifier.height(4.dp))
-                    // Left-aligned green header, same style as the section labels below.
-                    ConsoleLabel("[ $voiceWorld ]")
+                    VoiceHeader(voiceWorld, onOpen = {
+                        com.wsvdmeer.pwncompanion.ai.Franchise.entries.find { it.label == voiceWorld }
+                            ?.let { mainViewModel.openVoiceLines(it) }
+                    })
                 }
                 Spacer(modifier = Modifier.height(8.dp))
             }
@@ -464,11 +466,13 @@ fun MainContentArea(
         // reads as idle-and-alive rather than a screen of empty sections. ──
         if (connectedDevices.isEmpty()) {
             item {
-                val world by pwnagotchiVM.franchiseLabel.collectAsState()
                 ConsoleStandbyBlock(
                     networkingArmed = networkingArmed,
-                    world = world,
-                    nextIdleLine = { pwnagotchiVM.idleLine() },
+                    nextIdleVoice = { pwnagotchiVM.idleVoice() },
+                    onOpenVoiceLines = { world ->
+                        com.wsvdmeer.pwncompanion.ai.Franchise.entries.find { it.label == world }
+                            ?.let { mainViewModel.openVoiceLines(it) }
+                    },
                 )
                 ConsoleRule()
             }
@@ -673,6 +677,34 @@ private fun ConsoleLabel(text: String) {
     )
 }
 
+/**
+ * The "[ VOICE ]  ‹world›" header — green label + current franchise name, styled like the other
+ * console headers ([ history ] etc). Shared by the live screen (under the e-ink face) and the
+ * standby screen (under the idle face) so both read identically.
+ */
+@Composable
+private fun VoiceHeader(world: String, onOpen: (() -> Unit)? = null) {
+    val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    // [ VOICE ] hard-left, the franchise (+ chevron when tappable) hard-right — the same
+    // left/right split as [ history ] / [ captures ]. When onOpen is set, the whole row opens
+    // the voice detail (the per-franchise line lists).
+    Row(
+        modifier = Modifier.fillMaxWidth()
+            .then(if (onOpen != null) Modifier.clickable { onOpen() } else Modifier),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ConsoleLabel("[ voice ]")
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(world.lowercase(), color = dim, fontSize = 11.sp)
+            if (onOpen != null) Text("›", color = dim, fontSize = 11.sp)
+        }
+    }
+}
+
 @Composable
 private fun ConsoleRow(key: String, value: String, valueColor: Color, onClick: (() -> Unit)? = null) {
     Row(modifier = if (onClick != null) Modifier.clickable { onClick() } else Modifier) {
@@ -820,31 +852,34 @@ private fun ConsoleSteeringBlock(
 @Composable
 private fun ConsoleStandbyBlock(
     networkingArmed: Boolean,
-    world: String = "",
-    nextIdleLine: () -> String = { "" },
+    nextIdleVoice: () -> Pair<String, String> = { "" to "" },
+    onOpenVoiceLines: ((String) -> Unit)? = null,
 ) {
     val primary = MaterialTheme.colorScheme.primary
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     val tertiary = MaterialTheme.colorScheme.tertiary
     val onSurface = MaterialTheme.colorScheme.onSurface
 
-    // The pet keeps talking while unlinked: a slowly-rotating in-character "idle" line from the
-    // current franchise (falls back to a generic quip if the voice pool isn't ready yet).
-    val fallback = "waiting to hunt."
-    var line by remember { mutableStateOf(nextIdleLine().ifBlank { fallback }) }
+    // The pet keeps talking while unlinked: a slowly-rotating in-character "idle" line, cycling
+    // through the enabled franchises (label + line move together; falls back to a generic quip).
+    var voice by remember { mutableStateOf(nextIdleVoice()) }
     LaunchedEffect(Unit) {
-        while (true) { delay(5000); line = nextIdleLine().ifBlank { fallback } }
+        while (true) { delay(5000); voice = nextIdleVoice() }
     }
+    val world = voice.first
+    val line = voice.second.ifBlank { "waiting to hunt." }
 
     Column {
         ConsoleLabel("[ standby ]")
         Spacer(modifier = Modifier.height(6.dp))
         Text("(⌐■_■)  zzz", color = primary, fontSize = 18.sp, lineHeight = 22.sp)
+        // Same [ voice ] header as the connected screen, directly under the idle face.
+        if (world.isNotBlank()) {
+            Spacer(modifier = Modifier.height(4.dp))
+            VoiceHeader(world, onOpen = onOpenVoiceLines?.let { cb -> { cb(world) } })
+        }
         Spacer(modifier = Modifier.height(6.dp))
         Text("\"$line\"", color = onSurface, fontSize = 12.sp, lineHeight = 18.sp)
-        if (world.isNotBlank()) {
-            Text("[ ${world.lowercase()} ]", color = dim, fontSize = 10.sp, lineHeight = 14.sp)
-        }
         Spacer(modifier = Modifier.height(6.dp))
         Text(
             if (networkingArmed) "○ waiting for the Bluetooth tether…" else "○ no pwnagotchi linked",
@@ -1070,7 +1105,7 @@ private fun relativeAge(unixSeconds: Long?): String {
 }
 
 @Composable
-private fun RawDeviceImage(imageData: String) {
+private fun RawDeviceImage(imageData: String, invert: Boolean = false) {
     // Decode the current frame; if it fails (occasional partial/corrupt push over
     // the WebSocket), keep showing the last good frame instead of blanking out.
     // This is why the screen sometimes "disappeared" — a single bad frame, not a
@@ -1080,6 +1115,20 @@ private fun RawDeviceImage(imageData: String) {
     if (decoded != null) lastGood = decoded
     val bmp = decoded ?: lastGood
     if (bmp != null) {
+        // A pwnagotchi with ui.invert = true renders a light (black-on-white) face; flip it at
+        // render time so it stays light-on-dark and blends into the console. No bitmap copy.
+        val colorFilter = if (invert) {
+            androidx.compose.ui.graphics.ColorFilter.colorMatrix(
+                androidx.compose.ui.graphics.ColorMatrix(
+                    floatArrayOf(
+                        -1f, 0f, 0f, 0f, 255f,
+                        0f, -1f, 0f, 0f, 255f,
+                        0f, 0f, -1f, 0f, 255f,
+                        0f, 0f, 0f, 1f, 0f,
+                    )
+                )
+            )
+        } else null
         androidx.compose.foundation.Image(
             bitmap = bmp,
             contentDescription = "device screen",
@@ -1088,7 +1137,8 @@ private fun RawDeviceImage(imageData: String) {
             contentScale = ContentScale.FillWidth,
             // Nearest-neighbour upscale: the e-ink frame is a tiny bitmap, so bilinear
             // (the default) smears it. None keeps each e-ink pixel a crisp block.
-            filterQuality = androidx.compose.ui.graphics.FilterQuality.None
+            filterQuality = androidx.compose.ui.graphics.FilterQuality.None,
+            colorFilter = colorFilter,
         )
     }
 }

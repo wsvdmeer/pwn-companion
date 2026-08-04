@@ -39,7 +39,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Full-screen detail views reachable from the console summaries (tap a section). */
-enum class DetailScreen { NONE, CAPTURES, LOG, LEARNING, STATS, SETTINGS }
+enum class DetailScreen { NONE, CAPTURES, LOG, LEARNING, STATS, SETTINGS, VOICE }
 
 /**
  * Main Activity ViewModel.
@@ -149,6 +149,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val detailScreen: StateFlow<DetailScreen> = _detailScreen.asStateFlow()
     fun openDetail(screen: DetailScreen) { _detailScreen.value = screen }
     fun closeDetail() { _detailScreen.value = DetailScreen.NONE }
+
+    // The franchise whose lines the VOICE detail shows, + where to return on back (the [ VOICE ]
+    // header opens it from the console → back to NONE; a Settings row opens it → back to SETTINGS).
+    private val _voiceLinesFranchise = MutableStateFlow<com.wsvdmeer.pwncompanion.ai.Franchise?>(null)
+    val voiceLinesFranchise: StateFlow<com.wsvdmeer.pwncompanion.ai.Franchise?> = _voiceLinesFranchise.asStateFlow()
+    private var _voiceLinesReturn = DetailScreen.NONE
+    fun openVoiceLines(franchise: com.wsvdmeer.pwncompanion.ai.Franchise) {
+        _voiceLinesFranchise.value = franchise
+        _voiceLinesReturn = _detailScreen.value
+        _detailScreen.value = DetailScreen.VOICE
+    }
+    fun closeVoiceLines() {
+        _detailScreen.value = _voiceLinesReturn
+        _voiceLinesReturn = DetailScreen.NONE
+    }
 
     // Last WiFi event from the Pwnagotchi — consumed by the AI personality card
     private val _lastNetworkEvent = MutableStateFlow<com.wsvdmeer.pwncompanion.protocol.MessageHandler.NetworkEventUpdate?>(null)
