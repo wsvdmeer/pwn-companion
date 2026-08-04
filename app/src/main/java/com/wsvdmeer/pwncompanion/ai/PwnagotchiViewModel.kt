@@ -250,6 +250,10 @@ class PwnagotchiViewModel(application: Application) : ViewModel() {
     private fun curatedLine(category: String, network: String? = null): String =
         fillSlots(BlendedVoice.linesFor(currentFranchise(), category).random(), network)
 
+    /** An in-character "idle" line from the current franchise — used by the standby (disconnected)
+     *  screen so the console still talks while no pwnagotchi is linked. */
+    fun idleLine(): String = curatedLine("idle")
+
     /** Map a WifiEvent to a corpus category (handshake/assoc/deauth/idle/excited/weary/normal). */
     private fun corpusCategory(event: WifiEvent): String = when (event.type) {
         "HANDSHAKE_CAPTURED", "CONNECTION_SUCCESS" -> "handshake"

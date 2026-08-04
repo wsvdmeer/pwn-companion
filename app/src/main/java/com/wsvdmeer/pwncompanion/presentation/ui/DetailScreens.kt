@@ -27,8 +27,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
+import com.wsvdmeer.pwncompanion.ai.BlendedVoice
 import com.wsvdmeer.pwncompanion.ai.Franchise
 import com.wsvdmeer.pwncompanion.utils.NotifSettings
 import com.wsvdmeer.pwncompanion.utils.VoiceSettings
@@ -363,19 +367,20 @@ fun SettingsScreen(paddingValues: PaddingValues, onBack: () -> Unit) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
         Spacer(Modifier.height(14.dp))
 
-        Text("notifications", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
+        Text("[ NOTIFICATIONS ]", color = primary, fontWeight = FontWeight.Bold, fontSize = 12.sp, letterSpacing = 2.sp, fontFamily = TerminalMono)
         Spacer(Modifier.height(4.dp))
         SettingToggle("handshake caught", onCatch, primary, dim, onSurface) { NotifSettings.setOnCatch(context, !onCatch) }
         SettingToggle("password cracked", onCracked, primary, dim, onSurface) { NotifSettings.setOnCracked(context, !onCracked) }
 
         Spacer(Modifier.height(16.dp))
-        Text("voice — franchises in rotation", color = dim, fontSize = 11.sp, fontFamily = TerminalMono)
+        Text("[ VOICE ]", color = primary, fontWeight = FontWeight.Bold, fontSize = 12.sp, letterSpacing = 2.sp, fontFamily = TerminalMono)
+        Text("franchises in rotation", color = dim, fontSize = 10.sp, fontFamily = TerminalMono)
         Spacer(Modifier.height(4.dp))
         SettingToggle("all franchises", allOn, primary, dim, onSurface) { VoiceSettings.setAll(context, !allOn) }
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
         Franchise.entries.sortedBy { it.label.lowercase() }.forEach { f ->
             val on = f.name in enabledSet
-            SettingToggle(f.label, on, primary, dim, onSurface) { VoiceSettings.setEnabled(context, f, !on) }
+            FranchiseRow(f, on, primary, dim, onSurface) { VoiceSettings.setEnabled(context, f, !on) }
         }
         Spacer(Modifier.height(24.dp))
     }
@@ -389,8 +394,83 @@ private fun SettingToggle(
         Modifier.fillMaxWidth().clickable { onToggle() }.padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(if (on) "[x]" else "[ ]", color = if (on) primary else dim, fontSize = 14.sp, fontFamily = TerminalMono)
+        Text(if (on) "[■]" else "[ ]", color = if (on) primary else dim, fontSize = 14.sp, fontFamily = TerminalMono)
         Spacer(Modifier.width(10.dp))
         Text(label, color = onSurface, fontSize = 13.sp, fontFamily = TerminalMono, modifier = Modifier.weight(1f))
+    }
+}
+
+// Corpus categories, in the order they're shown when a franchise is expanded.
+private val CORPUS_CATEGORIES = listOf(
+    "handshake", "assoc", "deauth", "idle", "excited", "weary", "normal", "recap",
+)
+
+/**
+ * One franchise in the voice-rotation list. The `[■]`/`[ ]` toggle includes it in the rotation
+ * (tap the box); tapping the label/`lines ›` expands the actual corpus lines it contributes,
+ * grouped by category, so you can read exactly what each world says before pinning it. Lines are
+ * shown as-authored — the `[NETWORK]`/`[CAPTURES]`/… slots are filled with live data at runtime.
+ */
+@Composable
+private fun FranchiseRow(
+    franchise: Franchise,
+    on: Boolean,
+    primary: Color,
+    dim: Color,
+    onSurface: Color,
+    onToggle: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // Box toggles rotation membership…
+            Text(
+                if (on) "[■]" else "[ ]", color = if (on) primary else dim,
+                fontSize = 14.sp, fontFamily = TerminalMono,
+                modifier = Modifier.clickable { onToggle() },
+            )
+            Spacer(Modifier.width(10.dp))
+            // …the label + chevron reveal the lines.
+            Text(
+                franchise.label, color = onSurface, fontSize = 13.sp, fontFamily = TerminalMono,
+                modifier = Modifier.weight(1f).clickable { expanded = !expanded },
+            )
+            Text(
+                if (expanded) "▾ lines" else "lines ›", color = dim, fontSize = 11.sp,
+                fontFamily = TerminalMono, modifier = Modifier.clickable { expanded = !expanded },
+            )
+        }
+        if (expanded) {
+            val byCat = BlendedVoice.corpus[franchise]
+            Column(Modifier.fillMaxWidth().padding(start = 24.dp, bottom = 8.dp)) {
+                if (byCat == null) {
+                    // No curated corpus for this franchise — it falls back to its examples.
+                    Text("examples", color = primary, fontSize = 10.sp, fontFamily = TerminalMono)
+                    franchise.examples.forEach { line ->
+                        Text(
+                            "· $line", color = onSurface.copy(alpha = 0.85f), fontSize = 12.sp,
+                            lineHeight = 16.sp, fontFamily = TerminalMono,
+                        )
+                    }
+                } else {
+                    CORPUS_CATEGORIES.forEach { cat ->
+                        val lines = byCat[cat].orEmpty()
+                        if (lines.isNotEmpty()) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(cat, color = primary, fontSize = 10.sp, fontFamily = TerminalMono)
+                            lines.forEach { line ->
+                                Text(
+                                    "· $line", color = onSurface.copy(alpha = 0.85f), fontSize = 12.sp,
+                                    lineHeight = 16.sp, fontFamily = TerminalMono,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
