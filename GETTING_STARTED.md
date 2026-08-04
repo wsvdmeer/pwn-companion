@@ -66,23 +66,60 @@ Enable it in `config.toml`:
 ```toml
 [main.plugins.pwn-companion]
 enabled = true
-show_on_screen = true
+show_on_screen = true        # draw the connection/GPS status on the e-ink screen
+
+# --- all optional (sensible defaults; only set what you want to change) ---
+# handshakes_dir       = "/home/pi/handshakes"   # where pwnagotchi writes captures (+ our .gps.json / .22000 sidecars)
+# push_image_interval  = 1     # seconds between e-ink screen frames sent to the app
+# request_gps_interval = 5     # seconds between GPS requests to the phone
+# On-screen GPS overlay — toggle fields + place them at [x, y] on the e-ink:
+# show_latitude  = true
+# show_longitude = true
+# show_accuracy  = true
+# show_altitude  = false
+# status_position    = [0, 0]
+# gps_position       = [0, 72]
+# latitude_position  = [0, 72]
+# longitude_position = [0, 82]
+# accuracy_position  = [0, 92]
+# altitude_position  = [0, 102]
 ```
 Then restart: `sudo systemctl restart pwnagotchi`.
+
+> **Turn off the `auto-tune` plugin if you run PwnCompanion.** The app's advisor already collects
+> per-channel stats and steers Wi-Fi recon toward the busiest channels *live* (see
+> [Deauth Advisor](docs/HOW_IT_WORKS.md#deauth-advisor--where-to-hunt-next)). The community `auto-tune` plugin does the
+> same job from the Pi side, so running both makes them fight over `personality.channels`. Disable it
+> and let the app be the single authority:
+> ```toml
+> [main.plugins.auto-tune]
+> enabled = false
+> ```
+> The app doesn't depend on auto-tune — the only thing lost is an optional `min_rssi` readout.
 
 ## Step 3 — Phone: install the app
 
 **Easiest — prebuilt APK:** download it from the [**Releases** page](../../releases) and sideload it (enable "install unknown apps" for your browser/file manager, then open the `.apk`). It's a **release-signed** build (self-signed; sideload) — Android 10+ on an arm64 device.
 
-**Or build it yourself:**
+**Or build it yourself.** Prerequisites:
+- **JDK 17** — required by the Android Gradle Plugin (9.2).
+- **Android SDK** — `compileSdk`/`targetSdk` **36**, `minSdk` **29** (Android 10+). Install SDK Platform 36 + build-tools via Android Studio or `sdkmanager`.
+- Gradle itself is handled by the wrapper (Gradle 9.4.1) — no separate install. Kotlin 2.2.10.
+- **NDK + CMake** — for the small on-phone-cracking library (`libwpacrack.so`, arm64-v8a + armeabi-v7a). Android Studio installs the NDK on first sync, or add it with `sdkmanager "ndk;<version>" "cmake;3.22.1"`. *(That's the only native code — the voice engine is pure Kotlin, no model.)*
+
 ```bash
-# On your dev machine (needs JDK 17, Android SDK 36, + NDK & CMake for the native cracker):
+# On your dev machine:
 ./gradlew assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
-(Or open the project in Android Studio and hit **Run**.) See the [README setup section](README.md#setup) for the full prerequisite list. The voice is fully on-device — **no model download**, so it opens straight to the console and works offline.
+(Or open the project in Android Studio and hit **Run**.) The voice is fully on-device — **no model download**, so it opens straight to the console and works offline.
 
-**Grant the permissions** it asks for: Bluetooth (the link), Location (geotag captures + required for BT scanning), Notifications (the foreground notice + alerts).
+**Runtime permissions** (requested on first launch):
+| Permission | Why |
+|---|---|
+| `BLUETOOTH_CONNECT`, `BLUETOOTH_SCAN` | the Bluetooth PAN link to the Pwnagotchi |
+| `ACCESS_FINE_LOCATION` | geotag captures for the map (and Android requires it for BT scanning) |
+| `POST_NOTIFICATIONS` | the foreground-service notice + cracked/connect alerts |
 
 ## Step 4 — Pair & connect
 
@@ -109,11 +146,11 @@ api_url = "https://wpa-sec.stanev.org"
 download_results = true
 ```
 
-You can also crack **on the phone itself** — no server, no setup: on the `[ captures ]` screen, tap a `crack ▸` (PMKID) row and it runs a dictionary attack locally. See [README → Handshake cracking](README.md#handshake-cracking-wpa-sec--on-phone).
+You can also crack **on the phone itself** — no server, no setup: on the `[ captures ]` screen, tap a `crack ▸` (PMKID) row and it runs a dictionary attack locally. See [Features → Handshake cracking](docs/FEATURES.md#handshake-cracking-wpa-sec--on-phone).
 
 ## Troubleshooting
 
 The Pi Zero 2 W shares one radio between Wi-Fi and Bluetooth, so the tether can drop under
 heavy hunting. If the link won't come up or dies mid-session, see
-[README → Troubleshooting](README.md#troubleshooting--connection-drops--needing-frequent-reboots)
+[Troubleshooting](docs/TROUBLESHOOTING.md#troubleshooting--connection-drops--needing-frequent-reboots)
 (short version: hard-reboot the Pi; the durable fix is a USB Wi-Fi adapter).
