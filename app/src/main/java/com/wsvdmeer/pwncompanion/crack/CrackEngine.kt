@@ -82,7 +82,7 @@ object CrackEngine {
     private val skip = AtomicBoolean(false)
     private val paused = AtomicBoolean(false)
 
-    fun norm(bssid: String): String = bssid.lowercase().replace(":", "").replace("-", "")
+    fun norm(bssid: String): String = CrackQueue.norm(bssid)
 
     private fun runningKey(): String? = (_state.value as? CrackState.Running)?.let { norm(it.bssid) }
 
@@ -97,15 +97,16 @@ object CrackEngine {
         if (runningKey() == key) return
         var added = false
         _queue.update { q ->
-            if (q.any { norm(it.bssid) == key }) q else { added = true; q + capture }
+            val next = CrackQueue.add(q, capture)
+            added = next !== q
+            next
         }
         if (added) start(context.applicationContext)
     }
 
     /** Remove a still-queued capture (no effect on the one currently running). */
     fun dequeue(capture: CaptureEntry) {
-        val key = norm(capture.bssid)
-        _queue.update { q -> q.filterNot { norm(it.bssid) == key } }
+        _queue.update { q -> CrackQueue.remove(q, capture.bssid) }
     }
 
     /** Skip the crack in progress and move on to the next queued one. */
@@ -183,7 +184,8 @@ object CrackEngine {
     private fun dequeueNext(): CaptureEntry? {
         var next: CaptureEntry? = null
         _queue.update { q ->
-            if (q.isEmpty()) { next = null; q } else { next = q.first(); q.drop(1) }
+            next = CrackQueue.head(q)
+            CrackQueue.tail(q)
         }
         return next
     }
@@ -360,15 +362,12 @@ object CrackEngine {
 
     private fun loadCheckpoint(context: Context, bssidKey: String, wordlistId: String): Long {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(bssidKey, null)
-            ?: return 0L
-        val parts = raw.split("@", limit = 2)
-        if (parts.size != 2 || parts[1] != wordlistId) return 0L
-        return parts[0].toLongOrNull() ?: 0L
+        return CrackCheckpoint.decode(raw, wordlistId)
     }
 
     private fun saveCheckpoint(context: Context, bssidKey: String, wordlistId: String, index: Long) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putString(bssidKey, "$index@$wordlistId").apply()
+            .edit().putString(bssidKey, CrackCheckpoint.encode(index, wordlistId)).apply()
     }
 
     private fun clearCheckpoint(context: Context, bssidKey: String) {
@@ -390,11 +389,11 @@ object CrackEngine {
             val exh = HashSet<String>()
             val att = HashSet<String>()
             for ((k, v) in all) {
-                val s = v as? String ?: continue
-                when {
-                    s.startsWith("c:") -> crackedNow[k] = s.substring(2)
-                    s == "x" -> exh.add(k)
-                    s == "a" -> att.add(k)
+                when (val outcome = CrackResults.parse(v as? String)) {
+                    is CrackResults.Outcome.Cracked -> crackedNow[k] = outcome.password
+                    CrackResults.Outcome.Exhausted -> exh.add(k)
+                    CrackResults.Outcome.Attempted -> att.add(k)
+                    null -> {}
                 }
             }
             if (crackedNow.isNotEmpty()) _cracked.update { crackedNow + it }
@@ -405,13 +404,13 @@ object CrackEngine {
 
     private fun persistResultCracked(context: Context, bssidKey: String, password: String) {
         context.getSharedPreferences(RESULTS_PREFS, Context.MODE_PRIVATE)
-            .edit().putString(bssidKey, "c:$password").apply()
+            .edit().putString(bssidKey, CrackResults.cracked(password)).apply()
         _attempted.update { it - bssidKey }   // cracked supersedes "tried"
     }
 
     private fun persistResultExhausted(context: Context, bssidKey: String) {
         context.getSharedPreferences(RESULTS_PREFS, Context.MODE_PRIVATE)
-            .edit().putString(bssidKey, "x").apply()
+            .edit().putString(bssidKey, CrackResults.EXHAUSTED).apply()
         _exhausted.update { it + bssidKey }
         _attempted.update { it - bssidKey }   // "no match" supersedes "tried"
     }
@@ -420,7 +419,7 @@ object CrackEngine {
     private fun persistResultAttempted(context: Context, bssidKey: String) {
         if (_exhausted.value.contains(bssidKey) || _cracked.value.containsKey(bssidKey)) return
         context.getSharedPreferences(RESULTS_PREFS, Context.MODE_PRIVATE)
-            .edit().putString(bssidKey, "a").apply()
+            .edit().putString(bssidKey, CrackResults.ATTEMPTED).apply()
         _attempted.update { it + bssidKey }
     }
 
