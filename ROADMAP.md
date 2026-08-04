@@ -5,14 +5,9 @@ things I'd like to do, **not promises or dates**. Issues and PRs welcome.
 
 ## Prioritized next
 
-The current focus, in no strict order:
-
-- **More tests (partly done)** — capture merge/normalize, HuntAdvisor, and the CrackEngine
-  candidate-space math (`CrackSpace`) are now covered. What's left is CrackEngine's **queue +
-  checkpoint I/O** (enqueue/dedup, resume position), which needs Robolectric or a Context fake — a
-  bigger lift than the pure-logic tests.
-- **Connection-health polish** — clearer reconnect state for the flaky Pi Zero BT link. Drops
-  mid-session are common; the real fix is a USB Wi-Fi adapter, but the app can surface the state better.
+Both recent focus items (crack-engine test coverage, connection-health polish) shipped — the next
+pick is open. Strong candidates from the backlog: a **wordlist picker + streaming**, **R8/minify**,
+and **refreshed screenshots** of the current UI.
 
 ## Backlog / ideas
 
@@ -48,6 +43,14 @@ per-AP button just duplicates the autonomy.*
 
 ## Recently shipped
 
+- **Link-health watchdog** — while connected, the console flags the link "stalled ‹Ns› — tether
+  quiet" (and logs it) once frames stop arriving past a ~10s threshold. The plugin pushes a frame
+  every second, so real silence means a BT contention stall / half-open socket, not idleness — so a
+  frozen e-ink face now reads as a dead tether instead of a live one, cueing a reset/reboot.
+- **Crack-engine test coverage** — the checkpoint resume-gate, the persisted-outcome codec
+  (`c:`/`x`/`a`), and the FIFO queue dedup are now pure units (`CrackCheckpoint` / `CrackResults` /
+  `CrackQueue`) with unit tests, alongside the existing `CrackSpace` candidate-space math. Only the
+  coroutine processor loop + power-policy pauses remain untested (integration-level, needs Robolectric).
 - **Offline starter wordlist + auto-update** — a compact bundled list (~21K WPA-relevant words) loads
   with no network, so the first crack works out of the box; the full pwncrack list downloads in the
   background and refreshes via a throttled conditional GET (~once a day) when it changes.

@@ -170,6 +170,8 @@ fun MainContentArea(
     // Networking armed (desired) but maybe not bound yet — drives the "waiting for link"
     // states in the status line + command bar so the start button isn't a silent no-op.
     val networkingArmed by mainViewModel.networkingArmed.collectAsState()
+    // Seconds the (connected) BT tether has been silent past the stall threshold, or null when live.
+    val linkStalledSecs by mainViewModel.linkStalledSecs.collectAsState()
     LaunchedEffect(isAutoMode) {
         pwnagotchiVM.setAutoMode(isAutoMode)
     }
@@ -454,6 +456,7 @@ fun MainContentArea(
                 queueSize = queueSize,
                 isAutoMode = isAutoMode,
                 gpsData = gpsData,
+                linkStalledSecs = linkStalledSecs,
             )
             ConsoleRule()
         }
@@ -692,15 +695,21 @@ private fun ConsoleStatusBlock(
     queueSize: Int,
     isAutoMode: Boolean,
     gpsData: com.wsvdmeer.pwncompanion.models.GpsData?,
+    linkStalledSecs: Int? = null,
 ) {
     val online = device?.isConnected == true
+    // Connected but no frames for a while → the BT tether has gone quiet (contention / half-open
+    // socket). Surface it so a frozen face reads as a stalled link, not a live one.
+    val stalled = online && linkStalledSecs != null
     val primary = MaterialTheme.colorScheme.primary
+    val warn = MaterialTheme.colorScheme.error
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     val uri = androidx.compose.ui.platform.LocalUriHandler.current
     val piIp = device?.ipAddress?.takeIf { it.isNotBlank() && it != "?" }
     ConsoleRow(
         "link",
         when {
+            stalled -> "◐ ${device?.interfaceName ?: "?"} · stalled ${linkStalledSecs}s — tether quiet"
             online -> "● ${device?.interfaceName ?: "?"}  ${device?.ipAddress ?: "?"}"
             serverRunning -> "○ listening…"
             // Armed but not bound: the server can't come up until the BT tether exists.
@@ -708,6 +717,7 @@ private fun ConsoleStatusBlock(
             else -> "○ offline"
         },
         when {
+            stalled -> warn
             online -> primary
             networkingArmed -> MaterialTheme.colorScheme.tertiary
             else -> dim

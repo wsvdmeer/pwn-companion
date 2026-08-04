@@ -2,6 +2,7 @@ package com.wsvdmeer.pwncompanion.presentation
 
 import android.app.Application
 import android.content.Intent
+import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -32,6 +33,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -111,6 +114,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _connectedDeviceCount = MutableStateFlow(0)
     val connectedDeviceCount: StateFlow<Int> = _connectedDeviceCount.asStateFlow()
+
+    // Link-health watchdog. The plugin pushes a frame ~every second, so once we're connected a
+    // multi-second silence means the BT tether has stalled (shared-radio contention leaves the
+    // socket half-open — no disconnect fires, so `isConnected` stays true and the e-ink face just
+    // freezes). `elapsedRealtime` of the last frame received (monotonic; immune to clock changes).
+    @Volatile private var lastFrameElapsed = 0L
+    // Seconds the connected link has been silent past the stall threshold, or null when it's live
+    // (or not connected). Drives the "link stalled" state so a frozen console reads as a dead
+    // tether, not a live one. A periodic ticker updates it (a bare timestamp wouldn't recompose).
+    private val _linkStalledSecs = MutableStateFlow<Int?>(null)
+    val linkStalledSecs: StateFlow<Int?> = _linkStalledSecs.asStateFlow()
+    // ~10 frames of expected traffic missed before we call it stalled — long enough to ride out a
+    // brief contention blip, short enough that a genuinely dead tether shows within seconds.
+    private val STALE_AFTER_MS = 10_000L
 
     private val _outgoingQueueSize = MutableStateFlow(0)
     val outgoingQueueSize: StateFlow<Int> = _outgoingQueueSize.asStateFlow()
@@ -657,11 +674,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             service.gpsData.collect { gps -> if (gps != null) { _gpsData.value = gps; onGpsFix(gps) } }
         }
 
+        // Link-health watchdog: while a device is connected, flag the link "stalled" once it's been
+        // silent past the threshold (the plugin's ~1s frame push means real silence is a stall, not
+        // idleness). A 2s tick is enough resolution for a seconds-scale readout, and it self-clears
+        // when frames resume or the device drops. Logs the stall edge once so it lands in the feed.
+        viewModelScope.launch {
+            var wasStalled = false
+            while (isActive) {
+                delay(2_000)
+                val connected = _deviceStates.value.values.any { it.isConnected }
+                val last = lastFrameElapsed
+                val stalled = if (connected && last > 0L) {
+                    val quietMs = SystemClock.elapsedRealtime() - last
+                    if (quietMs >= STALE_AFTER_MS) (quietMs / 1000).toInt() else null
+                } else null
+                _linkStalledSecs.value = stalled
+                if (stalled != null && !wasStalled) appendLog("[!] link :: tether quiet — stalled?")
+                wasStalled = stalled != null
+            }
+        }
+
         viewModelScope.launch {
             service.deviceStates.collect { states ->
                 val prev = _connectedDeviceCount.value
                 _deviceStates.value = states
                 _connectedDeviceCount.value = states.size
+                // Fresh connect (0 → ≥1): start the silence clock now so the first frame has a grace
+                // window and a stale timestamp from a prior session can't instantly flag "stalled".
+                if (prev == 0 && states.isNotEmpty()) lastFrameElapsed = SystemClock.elapsedRealtime()
                 Log.d(tag, "Device states updated: ${states.size} devices")
 
                 // Drive the screen image from the persistent device state (not only the
@@ -672,6 +712,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     .filter { !it.lastImageData.isNullOrEmpty() }
                     .maxByOrNull { it.lastImageTimestamp ?: 0L }
                     ?.let { freshest ->
+                        // A new frame (device timestamp advanced) → the tether is alive right now.
+                        // Stamp the monotonic clock so the watchdog can measure silence since.
+                        if (freshest.lastImageTimestamp != _currentImageTimestamp.value) {
+                            lastFrameElapsed = SystemClock.elapsedRealtime()
+                        }
                         _currentImageData.value = freshest.lastImageData
                         _currentImageDeviceId.value = freshest.deviceId
                         _currentImageTimestamp.value = freshest.lastImageTimestamp
