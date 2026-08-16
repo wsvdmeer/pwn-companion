@@ -986,7 +986,14 @@ private fun ConsoleBarRow(key: String, fraction: Float, value: String, color: Co
                 )
             }
         }
-        Text("  $value", color = color, fontSize = 12.sp, lineHeight = 18.sp, maxLines = 1, softWrap = false)
+        // Fixed-width, right-aligned value so a wider number (e.g. "100%" vs "2%", "-75dBm" vs "30s")
+        // doesn't steal width from the weighted bar — every row's bar then spans the same width.
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            value, color = color, fontSize = 12.sp, lineHeight = 18.sp,
+            maxLines = 1, softWrap = false, textAlign = TextAlign.End,
+            modifier = Modifier.width(56.dp),
+        )
     }
 }
 

@@ -322,7 +322,7 @@ fun LearningDetailScreen(viewModel: MainViewModel, paddingValues: PaddingValues,
                         }
                     }
                     Text(
-                        "  ${ch.observationCount.toString().padStart(4)}  ${yieldPct}%",
+                        "  ${ch.observationCount.toString().padStart(4)}  ${"$yieldPct%".padStart(4)}",
                         color = rowColor, fontSize = 12.sp, lineHeight = 18.sp, fontFamily = TerminalMono,
                         maxLines = 1, softWrap = false
                     )
