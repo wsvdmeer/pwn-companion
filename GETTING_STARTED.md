@@ -54,6 +54,8 @@ See the [plugin's README](https://github.com/wsvdmeer/pwnagotchi-plugins) for pa
 
 ## Step 2 — Pi: install the `pwn-companion.py` plugin (this project)
 
+> 📦 **`pwn-companion` is now available in pwnstore** — the easiest install is to enable it from the pwnstore plugin browser on your Pi, which fetches the plugin for you. Still install the dependency below (`python3-websockets`). Manual install (or for the newest version straight from this repo):
+
 ```bash
 # On the Pi:
 sudo apt install -y python3-websockets       # required (apt pkg — Bookworm blocks system-wide pip)

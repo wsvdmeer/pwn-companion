@@ -414,7 +414,7 @@ SO_BINDTODEVICE = 25  # Linux-specific socket option
 class PwnCompanion(Plugin):
     __author__ = "wsvdmeer"
     __version__ = "2.0.0"
-    __description__ = "WebSocket client for communication with pwn-companion android app (app-hosted server)"
+    __description__ = "Device-side bridge to the PwnCompanion app: screen mirror, GPS, telemetry, captures, commands, and AI voice."
 
     csrf_exempt = True
 
@@ -774,7 +774,14 @@ class PwnCompanion(Plugin):
                 log.info(
                     f"[pwn-companion]  Starting UDP discovery on port {UDP_DISCOVERY_PORT}..."
                 )
-                # Start discovery (pass the interface for UDP listening)
+                # (Re)start discovery bound to the CURRENT interface. bnep0 can be
+                # torn down and recreated (a bluetooth restart or reconnect), which
+                # leaves the old discovery socket bound to the stale interface via
+                # SO_BINDTODEVICE - it stays bound but silently receives nothing.
+                # Restart discovery so it rebinds to the fresh interface.
+                if self.discovering:
+                    log.info("[pwn-companion] Rebinding discovery to the current interface")
+                    self._stop_client_discovery(wait=True)
                 self._start_client_discovery(iface)
             else:
                 log.warning(

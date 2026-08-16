@@ -17,7 +17,7 @@ A [Pwnagotchi](https://github.com/jayofelony/pwnagotchi) is a pocket gadget (usu
 
 The guiding idea: **move the thinking to the phone** (which has compute, GPS, and storage) and leave the Pi lean, just hunting. See ["Why the brain lives on the phone"](docs/HOW_IT_WORKS.md#why-the-brain-lives-on-the-phone-not-the-pi).
 
-**Requires Android 10+ (API 29)** on an arm64 device, plus a [Pwnagotchi](https://github.com/jayofelony/pwnagotchi) running the [`bt-tether`](https://github.com/wsvdmeer/pwnagotchi-plugins) + `pwn-companion.py` plugins.
+**Requires Android 10+ (API 29)** on an arm64 device, plus a [Pwnagotchi](https://github.com/jayofelony/pwnagotchi) running the [`bt-tether`](https://github.com/wsvdmeer/pwnagotchi-plugins) + `pwn-companion.py` plugins. The `pwn-companion` plugin is now **available in pwnstore** for one-tap install (see [GETTING_STARTED.md](GETTING_STARTED.md)).
 
 > ⚠️ **Responsible use & no warranty.** PwnCompanion is a companion for authorized Wi-Fi security research and education, paired with a [Pwnagotchi](https://github.com/jayofelony/pwnagotchi). Capturing handshakes, sending deauthentication frames, and cracking passwords may be illegal without permission — only use it on networks you **own or have explicit authorization to test**. You are responsible for complying with your local laws. The software is provided **as-is, without warranty of any kind — use at your own risk** (see GPL-3.0 §15–16). Licensed under **GPL-3.0** (see [`LICENSE`](LICENSE)).
 
