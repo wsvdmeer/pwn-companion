@@ -66,6 +66,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import com.wsvdmeer.pwncompanion.utils.ImageUtil
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -1229,13 +1230,25 @@ private fun ConsoleCommandBar(
     onReboot: () -> Unit = {},
     onShutdown: () -> Unit = {},
 ) {
+    // Mode-switch confirmation: a stray tap on the toggle restarts the pwnagotchi into the
+    // other mode (a disruptive round-trip), so hold the request here and confirm via a dialog
+    // before firing. null = no pending switch; true = switch to AUTO; false = switch to MANUAL.
+    var pendingMode by remember { mutableStateOf<Boolean?>(null) }
+    pendingMode?.let { toAuto ->
+        ModeSwitchDialog(
+            toAuto = toAuto,
+            onConfirm = { pendingMode = null; if (toAuto) onAuto() else onManual() },
+            onDismiss = { pendingMode = null },
+        )
+    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             // Mode toggle — only meaningful while a pwnagotchi is actually LINKED (not merely
             // while the server is listening), since it sends restart_auto/manual to the device.
+            // Tapping only arms the dialog; the switch itself fires on confirm.
             if (deviceConnected) {
-                if (isAutoMode) CmdAction("go manual", MaterialTheme.colorScheme.tertiary, Modifier.weight(1f), onManual)
-                else CmdAction("go auto", MaterialTheme.colorScheme.primary, Modifier.weight(1f), onAuto)
+                if (isAutoMode) CmdAction("go manual", MaterialTheme.colorScheme.tertiary, Modifier.weight(1f)) { pendingMode = false }
+                else CmdAction("go auto", MaterialTheme.colorScheme.primary, Modifier.weight(1f)) { pendingMode = true }
             }
             // Service toggle — three states so a "start" tap is never a silent no-op:
             //   running               → stop service
@@ -1256,6 +1269,41 @@ private fun ConsoleCommandBar(
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 ConfirmCmdAction("reboot pi", MaterialTheme.colorScheme.tertiary, Modifier.weight(1f), onReboot)
                 ConfirmCmdAction("shutdown pi", MaterialTheme.colorScheme.error, Modifier.weight(1f), onShutdown)
+            }
+        }
+    }
+}
+
+/**
+ * Confirmation for an AUTO/MANUAL switch. The toggle sits next to the service/power controls and
+ * gets fat-fingered, and each switch restarts the pwnagotchi — so require an explicit confirm.
+ * Terminal-styled (bordered box, console labels) to match the command bar rather than a stock
+ * Material dialog.
+ */
+@Composable
+private fun ModeSwitchDialog(toAuto: Boolean, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    val accent = if (toAuto) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .clip(TerminalBoxShape)
+                .background(MaterialTheme.colorScheme.surface)
+                .border(1.dp, accent.copy(alpha = 0.5f), TerminalBoxShape)
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                if (toAuto) "[ switch → AUTO ]" else "[ switch → MANUAL ]",
+                color = accent, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+            )
+            Text(
+                if (toAuto) "Restart the pwnagotchi into AUTO — it resumes autonomous hunting."
+                else "Restart the pwnagotchi into MANUAL — it pauses hunting (safe for config changes).",
+                color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, lineHeight = 18.sp,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                CmdAction("cancel", MaterialTheme.colorScheme.onSurfaceVariant, Modifier.weight(1f), onDismiss)
+                CmdAction("confirm", accent, Modifier.weight(1f), onConfirm)
             }
         }
     }
