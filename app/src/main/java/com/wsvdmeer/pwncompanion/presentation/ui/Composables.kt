@@ -173,6 +173,8 @@ fun MainContentArea(
     val networkingArmed by mainViewModel.networkingArmed.collectAsState()
     // Seconds the (connected) BT tether has been silent past the stall threshold, or null when live.
     val linkStalledSecs by mainViewModel.linkStalledSecs.collectAsState()
+    // Newer app version on GitHub (or null) — surfaced as a single line on the version row.
+    val updateVersion by mainViewModel.updateVersion.collectAsState()
     LaunchedEffect(isAutoMode) {
         pwnagotchiVM.setAutoMode(isAutoMode)
     }
@@ -455,6 +457,7 @@ fun MainContentArea(
                 isAutoMode = isAutoMode,
                 gpsData = gpsData,
                 linkStalledSecs = linkStalledSecs,
+                updateVersion = updateVersion,
             )
             ConsoleRule()
         }
@@ -732,6 +735,7 @@ private fun ConsoleStatusBlock(
     isAutoMode: Boolean,
     gpsData: com.wsvdmeer.pwncompanion.models.GpsData?,
     linkStalledSecs: Int? = null,
+    updateVersion: String? = null,
 ) {
     val online = device?.isConnected == true
     // Connected but no frames for a while → the BT tether has gone quiet (contention / half-open
@@ -765,13 +769,26 @@ private fun ConsoleStatusBlock(
         ConsoleRow("node", "${device.pwnagotchiName ?: device.deviceName}   ws:${device.port}", MaterialTheme.colorScheme.onSurface)
         ConsoleRow("mode", if (isAutoMode) "auto · hunting" else "manual · paused", if (isAutoMode) primary else MaterialTheme.colorScheme.tertiary)
     }
-    // App version + build (matches the APK manifest); tap → the pwn-companion GitHub.
-    ConsoleRow(
-        "version",
-        "v${com.wsvdmeer.pwncompanion.BuildConfig.VERSION_NAME} (build ${com.wsvdmeer.pwncompanion.BuildConfig.VERSION_CODE})",
-        dim,
-        onClick = { uri.openUri("https://github.com/wsvdmeer/pwn-companion") },
-    )
+    // App version + build (matches the APK manifest); tap → the pwn-companion GitHub. When a newer
+    // release exists on GitHub, the value flips to an "update available" nudge (green + underlined)
+    // that deep-links to the releases page instead of the repo root.
+    val installed = "v${com.wsvdmeer.pwncompanion.BuildConfig.VERSION_NAME} (build ${com.wsvdmeer.pwncompanion.BuildConfig.VERSION_CODE})"
+    if (updateVersion != null) {
+        // Lead with the update (the row is single-line + ellipsized, so the important bit is first).
+        ConsoleRow(
+            "version",
+            "update → v$updateVersion  ($installed)",
+            primary,
+            onClick = { uri.openUri("https://github.com/wsvdmeer/pwn-companion/releases/latest") },
+        )
+    } else {
+        ConsoleRow(
+            "version",
+            installed,
+            dim,
+            onClick = { uri.openUri("https://github.com/wsvdmeer/pwn-companion") },
+        )
+    }
     // GPS is shown compactly with just a fix indicator here; full detail is in the
     // dedicated [ gps ] block below. No "queue" row — it flips 0↔1 each GPS tick and
     // would make the whole console jump.

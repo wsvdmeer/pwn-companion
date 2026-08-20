@@ -19,6 +19,7 @@ App `1.2.4` (build 10) · plugin `2.1.0`
 | Area | Detail |
 |------|--------|
 | Mode-switch guard | `go auto` / `go manual` in the command bar now confirms via a terminal-styled bottom sheet before restarting the device — it sits by the service/power controls and was getting fat-fingered |
+| Update check | Sideloaded app has no store auto-update, so on launch it checks the GitHub `releases/latest` tag; if newer, the `version` row flips to `update → v1.2.x` and links to the releases page. Best-effort + silent on failure; version-compare unit-tested |
 
 ---
 
