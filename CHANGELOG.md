@@ -4,6 +4,24 @@ All significant changes to PwnCompanion, most recent first.
 
 ---
 
+## Session — 2026-08-20 (new-pwnagotchi pcapng · mode-switch guard)
+
+App `1.2.4` (build 10) · plugin `2.1.0`
+
+### Plugin — support the new pwnagotchi (v2.9.5.5+)
+| Area | Detail |
+|------|--------|
+| pcapng captures | bettercap now writes `.pcapng` (not `.pcap`). Capture discovery, sidecar naming, and cleanup are format-agnostic via `CAPTURE_EXTS`/`capture_base()`/`is_capture_file()` — pcapng grabs were previously invisible to the plugin |
+| Append-aware cache | pcapng files grow as bettercap appends frames, so a "partial" grab can become a full crackable handshake. `_classify_pcap` re-runs `hcxpcapngtool` when the capture is newer than its `.q`/`.22000` sidecar |
+| auto-tune → strategy | auto-tune moved to core and was renamed "strategy"; `_autotune_min_rssi()` probes both plugin keys (dedupes two copies of the lookup) |
+
+### App
+| Area | Detail |
+|------|--------|
+| Mode-switch guard | `go auto` / `go manual` in the command bar now confirms via a terminal-styled bottom sheet before restarting the device — it sits by the service/power controls and was getting fat-fingered |
+
+---
+
 ## Session — 2026-07-22 (UI polish · motion · franchises)
 
 ### Console UI
