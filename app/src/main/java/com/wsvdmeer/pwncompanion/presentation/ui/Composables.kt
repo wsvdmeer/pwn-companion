@@ -66,7 +66,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import androidx.compose.material3.ModalBottomSheet
 import com.wsvdmeer.pwncompanion.utils.ImageUtil
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -1235,7 +1235,7 @@ private fun ConsoleCommandBar(
     // before firing. null = no pending switch; true = switch to AUTO; false = switch to MANUAL.
     var pendingMode by remember { mutableStateOf<Boolean?>(null) }
     pendingMode?.let { toAuto ->
-        ModeSwitchDialog(
+        ModeSwitchSheet(
             toAuto = toAuto,
             onConfirm = { pendingMode = null; if (toAuto) onAuto() else onManual() },
             onDismiss = { pendingMode = null },
@@ -1277,32 +1277,37 @@ private fun ConsoleCommandBar(
 /**
  * Confirmation for an AUTO/MANUAL switch. The toggle sits next to the service/power controls and
  * gets fat-fingered, and each switch restarts the pwnagotchi — so require an explicit confirm.
- * Terminal-styled (bordered box, console labels) to match the command bar rather than a stock
- * Material dialog.
+ * A terminal-styled bottom sheet, matching the app's other sheets (filters, crack options,
+ * controls) rather than a stock Material dialog.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ModeSwitchDialog(toAuto: Boolean, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+private fun ModeSwitchSheet(toAuto: Boolean, onConfirm: () -> Unit, onDismiss: () -> Unit) {
     val accent = if (toAuto) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
-    Dialog(onDismissRequest = onDismiss) {
+    val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF02060A),
+        contentColor = accent,
+    ) {
         Column(
             modifier = Modifier
-                .clip(TerminalBoxShape)
-                .background(MaterialTheme.colorScheme.surface)
-                .border(1.dp, accent.copy(alpha = 0.5f), TerminalBoxShape)
-                .padding(20.dp),
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
                 if (toAuto) "[ switch → AUTO ]" else "[ switch → MANUAL ]",
-                color = accent, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                color = accent, fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = TerminalMono,
             )
             Text(
                 if (toAuto) "Restart the pwnagotchi into AUTO — it resumes autonomous hunting."
                 else "Restart the pwnagotchi into MANUAL — it pauses hunting (safe for config changes).",
-                color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, lineHeight = 18.sp,
+                color = dim, fontSize = 11.sp, lineHeight = 16.sp, fontFamily = TerminalMono,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                CmdAction("cancel", MaterialTheme.colorScheme.onSurfaceVariant, Modifier.weight(1f), onDismiss)
+                CmdAction("cancel", dim, Modifier.weight(1f), onDismiss)
                 CmdAction("confirm", accent, Modifier.weight(1f), onConfirm)
             }
         }
