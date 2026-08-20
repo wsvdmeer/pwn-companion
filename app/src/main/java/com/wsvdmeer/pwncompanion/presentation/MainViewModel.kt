@@ -18,6 +18,7 @@ import com.wsvdmeer.pwncompanion.models.PersonalityState
 import com.wsvdmeer.pwncompanion.models.Strategy
 import com.wsvdmeer.pwncompanion.storage.CaptureStore
 import com.wsvdmeer.pwncompanion.utils.NotificationHelper
+import com.wsvdmeer.pwncompanion.utils.UpdateChecker
 import com.wsvdmeer.pwncompanion.protocol.MessageHandler
 import com.wsvdmeer.pwncompanion.protocol.OutgoingMessageQueue
 import com.wsvdmeer.pwncompanion.services.CompanionBackgroundService
@@ -231,7 +232,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val cached = withContext(Dispatchers.IO) { CaptureStore.load(getApplication()) }
             if (_captures.value.isEmpty()) _captures.value = cached
         }
+        // Best-effort GitHub release check (sideloaded app → no store auto-update). Silent on any
+        // failure; the UI shows a single "update available" line only when this yields a version.
+        viewModelScope.launch {
+            _updateVersion.value = UpdateChecker.latestNewerThan(BuildConfig.VERSION_NAME)
+        }
     }
+
+    // Newer PwnCompanion version available on GitHub (e.g. "1.2.5"), or null if up to date / unknown.
+    private val _updateVersion = MutableStateFlow<String?>(null)
+    val updateVersion: StateFlow<String?> = _updateVersion.asStateFlow()
 
     // New-catch alerts: prime on the first emit (the synced backlog), then notify only on genuinely
     // fresh crackable captures — a new key with a recent timestamp — so a reconnect's whole history
