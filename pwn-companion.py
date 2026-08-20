@@ -390,6 +390,27 @@ GPS_COORD_PRECISION = 6  # decimal places
 LAT_LON_FORMAT_PRECISION = 8  # decimal places
 ACCURACY_FORMAT_PRECISION = 1  # decimal place
 
+# Capture file extensions pwnagotchi writes for a handshake grab. Newer releases
+# (bettercap) emit .pcapng; older ones emit .pcap. hcxpcapngtool reads both, so we
+# treat either as a capture and derive the sidecar base by stripping whichever suffix
+# matches. Order matters: strip the longest/most-specific first so ".pcapng" isn't
+# mistaken for a ".pcap" (which would leave a stray "ng" on the base).
+CAPTURE_EXTS = (".pcapng", ".pcap")
+
+
+def is_capture_file(name):
+    """True if `name` is a handshake capture (.pcap or .pcapng)."""
+    return name.endswith(CAPTURE_EXTS)
+
+
+def capture_base(path):
+    """Strip a trailing capture extension (.pcapng/.pcap) to get the sidecar base.
+    Returns `path` unchanged if it isn't a capture file, so callers can pass any path."""
+    for ext in CAPTURE_EXTS:
+        if path.endswith(ext):
+            return path[:-len(ext)]
+    return path
+
 # UI display configuration
 DEFAULT_STATUS_POSITION = [0, 0]
 DEFAULT_LAT_POSITION = [0, 72]
@@ -841,11 +862,7 @@ class PwnCompanion(Plugin):
                 # Only rewrite the extension, not every ".pcap" substring in the path
                 # (a dir/SSID containing ".pcap" would otherwise get a misnamed sidecar
                 # that _scan_capture_history — which strips only the suffix — can't pair).
-                gps_filename = (
-                    filename[:-len(".pcap")] + ".gps.json"
-                    if filename.endswith(".pcap")
-                    else filename + ".gps.json"
-                )
+                gps_filename = capture_base(filename) + ".gps.json"
                 gps_data = {
                     "latitude": self.last_gps.get("latitude"),
                     "longitude": self.last_gps.get("longitude"),
@@ -868,9 +885,7 @@ class PwnCompanion(Plugin):
             # taken during a GPS dropout still appears immediately (it just isn't mapped until
             # a later re-scan pairs a fix). No need to wait for a reconnect to re-scan the dir.
             if self.app_connected:
-                base = os.path.basename(filename)
-                if base.endswith(".pcap"):
-                    base = base[:-len(".pcap")]
+                base = capture_base(os.path.basename(filename))
                 cap_ssid, cap_bssid = (base.rsplit("_", 1) + [""])[:2] if "_" in base else (base, "")
                 entry = {
                     "ssid": cap_ssid or "unknown",
@@ -904,18 +919,29 @@ class PwnCompanion(Plugin):
         the pcap, it's crackable; if it writes nothing, it's a partial grab (e.g. only
         M1 frames) and won't crack. Result is cached in a <base>.q sidecar so history
         re-scans are instant. Returns None if hcxpcapngtool is unavailable (unknown).
+
+        Cache freshness: newer pwnagotchi (>= 2.9.5.5) writes .pcapng and bettercap keeps
+        *appending* frames to the same file, so a grab first seen as "partial" can later
+        grow into a full crackable handshake. We therefore only trust the .q sidecar while
+        it's at least as new as the capture; if the capture's mtime is newer, we re-run
+        hcxpcapngtool so an upgraded handshake (and its .22000 hash) isn't missed.
         """
         try:
-            base = pcap_path[:-len(".pcap")] if pcap_path.endswith(".pcap") else pcap_path
+            base = capture_base(pcap_path)
             cache = base + ".q"
             if use_cache and os.path.isfile(cache):
                 try:
-                    with open(cache) as fp:
-                        v = fp.read().strip()
-                    if v:
-                        return v
+                    fresh = os.path.getmtime(cache) >= os.path.getmtime(pcap_path)
                 except OSError:
-                    pass
+                    fresh = False   # can't compare → don't trust stale cache
+                if fresh:
+                    try:
+                        with open(cache) as fp:
+                            v = fp.read().strip()
+                        if v:
+                            return v
+                    except OSError:
+                        pass
 
             quality = "partial"
             out = base + ".22000.tmp"
@@ -974,7 +1000,7 @@ class PwnCompanion(Plugin):
         the app so it can crack the handshake on-phone. If a pcap held several APs, prefer the
         line whose AP-MAC matches the filename BSSID; else return the first.
         """
-        base = pcap_path[:-len(".pcap")] if pcap_path.endswith(".pcap") else pcap_path
+        base = capture_base(pcap_path)
         try:
             with open(base + ".22000") as fp:
                 lines = [ln.strip() for ln in fp if ln.strip()]
@@ -1006,7 +1032,7 @@ class PwnCompanion(Plugin):
             if not directory or not os.path.isdir(directory):
                 log.info(f"[pwn-companion] clear_captures: no handshakes dir at {directory}")
                 return 0
-            exts = (".pcap", ".gps.json", ".22000", ".22000.tmp", ".q")
+            exts = CAPTURE_EXTS + (".gps.json", ".22000", ".22000.tmp", ".q")
             for name in os.listdir(directory):
                 if name.endswith(exts):
                     try:
@@ -1036,7 +1062,7 @@ class PwnCompanion(Plugin):
             directory = self.handshakes_dir
             if not directory or not os.path.isdir(directory):
                 return 0
-            exts = (".pcap", ".gps.json", ".22000", ".22000.tmp", ".q")
+            exts = CAPTURE_EXTS + (".gps.json", ".22000", ".22000.tmp", ".q")
             for name in os.listdir(directory):
                 if not name.endswith(exts):
                     continue
@@ -1073,7 +1099,7 @@ class PwnCompanion(Plugin):
                 log.info(f"[pwn-companion] No handshakes dir at {directory}, skipping history scan")
                 return captures
 
-            pcaps = [f for f in os.listdir(directory) if f.endswith(".pcap")]
+            pcaps = [f for f in os.listdir(directory) if is_capture_file(f)]
             # Raw handshake-file count (what the pwnagotchi screen shows) — the app
             # dedupes captures by BSSID, so this lets it display "N networks · M
             # handshakes" and reconcile with the device's own count.
@@ -1085,7 +1111,7 @@ class PwnCompanion(Plugin):
             )
 
             for name in pcaps[:limit]:
-                base = name[:-len(".pcap")]
+                base = capture_base(name)
                 # pwnagotchi names files <ssid>_<bssid>.pcap; the BSSID is the
                 # last underscore-separated chunk (SSIDs may contain underscores).
                 if "_" in base:
@@ -1296,18 +1322,10 @@ class PwnCompanion(Plugin):
                     "timestamp": int(time.time()),
                 }
 
-                # Try to enrich with actual auto-tune min_rssi
-                try:
-                    import pwnagotchi.plugins as _plugins
-                    autotune = _plugins.loaded.get("auto-tune")
-                    if autotune:
-                        for attr in ("_min_rssi", "min_rssi"):
-                            v = getattr(autotune, attr, None)
-                            if v is not None:
-                                msg["autotune_min_rssi"] = int(v)
-                                break
-                except Exception:
-                    pass
+                # Try to enrich with actual auto-tune / strategy min_rssi
+                rssi = self._autotune_min_rssi()
+                if rssi is not None:
+                    msg["autotune_min_rssi"] = rssi
 
                 self._schedule_on_loop(
                     self._send_to_app(msg),
@@ -2452,20 +2470,32 @@ class PwnCompanion(Plugin):
                 "autotune_min_rssi": None,
                 "timestamp": int(time.time()),
             }
-            try:
-                import pwnagotchi.plugins as _plugins
-                autotune = _plugins.loaded.get("auto-tune")
-                if autotune:
-                    for attr in ("_min_rssi", "min_rssi"):
-                        v = getattr(autotune, attr, None)
-                        if v is not None:
-                            msg["autotune_min_rssi"] = int(v)
-                            break
-            except Exception:
-                pass
+            rssi = self._autotune_min_rssi()
+            if rssi is not None:
+                msg["autotune_min_rssi"] = rssi
             await self._send_to_app(msg)
         except Exception as e:
             log.debug(f"[pwn-companion] Error sending autotune stats: {e}")
+
+    def _autotune_min_rssi(self):
+        """The channel-tuning plugin's current min_rssi threshold, or None.
+
+        pwnagotchi moved auto-tune into core and renamed it to "strategy" in v2.9.5.5,
+        so probe both keys — older builds expose "auto-tune", newer ones "strategy".
+        Returns None when neither is loaded or the attribute is absent (the app already
+        treats a null autotune_min_rssi as "unknown").
+        """
+        try:
+            import pwnagotchi.plugins as _plugins
+            plugin = _plugins.loaded.get("auto-tune") or _plugins.loaded.get("strategy")
+            if plugin:
+                for attr in ("_min_rssi", "min_rssi"):
+                    v = getattr(plugin, attr, None)
+                    if v is not None:
+                        return int(v)
+        except Exception:
+            pass
+        return None
 
     def _wpa_sec_status(self):
         """(enabled, download_results) for the wpa-sec plugin, read from the live
