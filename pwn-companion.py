@@ -434,10 +434,16 @@ SO_BINDTODEVICE = 25  # Linux-specific socket option
 
 class PwnCompanion(Plugin):
     __author__ = "wsvdmeer"
-    __version__ = "2.1.0"
+    __version__ = "2.2.0"
     __description__ = "Device-side bridge to the PwnCompanion app: screen mirror, GPS, telemetry, captures, commands, and AI voice."
 
     csrf_exempt = True
+
+    # How often the background watchdog re-checks that discovery is running. This
+    # is what keeps the plugin working in MANUAL mode, where on_epoch never fires
+    # (so the epoch-based fallback is dead) - without it, missing the one-shot
+    # bt-tether connect event leaves the plugin idle forever.
+    DISCOVERY_WATCHDOG_INTERVAL = 30
 
     def __init__(self):
         # UI config
@@ -468,6 +474,10 @@ class PwnCompanion(Plugin):
         self.listen_task = None
         self.periodic_tasks = []
         self.lock = threading.Lock()
+
+        # Background discovery watchdog (works without epochs / in manual mode)
+        self._watchdog_stop = threading.Event()
+        self._watchdog_thread = None
 
         # Data storage
         self.last_gps = None
@@ -581,10 +591,43 @@ class PwnCompanion(Plugin):
             f"GPS request: {self.request_gps_interval}s"
         )
 
+        # Start the discovery watchdog so the plugin bootstraps discovery even when
+        # on_epoch never fires (manual mode) or the bt-tether connect event is missed.
+        self._watchdog_stop.clear()
+        self._watchdog_thread = threading.Thread(
+            target=self._discovery_watchdog_loop, daemon=True, name="pwn-companion-watchdog"
+        )
+        self._watchdog_thread.start()
+
     def on_unloaded(self):
         """Plugin unloaded"""
         log.info("[pwn-companion] Plugin unloading")
+        self._watchdog_stop.set()
         self._stop_client_discovery()
+
+    def _ensure_discovery(self):
+        """Start discovery if a BT-PAN interface is up but we're neither connected
+        nor already discovering. Shared by on_epoch and the background watchdog, so
+        it works regardless of whether pwnagotchi is epoching."""
+        if self.discovering or self.app_connected:
+            return
+        iface = self._detect_bnep_interface()
+        if iface:
+            log.info(
+                f"[pwn-companion] bnep interface '{iface}' up without a bt-tether "
+                f"event - starting discovery"
+            )
+            self._start_client_discovery(iface)
+
+    def _discovery_watchdog_loop(self):
+        """Periodically ensure discovery is running, independent of pwnagotchi
+        epochs. In manual mode on_epoch never fires, so this is the only thing that
+        rescues the plugin if it missed the one-shot bt-tether connect event."""
+        while not self._watchdog_stop.wait(self.DISCOVERY_WATCHDOG_INTERVAL):
+            try:
+                self._ensure_discovery()
+            except Exception as e:
+                log.debug(f"[pwn-companion] discovery watchdog error: {e}")
 
     def on_ui_setup(self, ui):
         """Setup UI components"""
@@ -1262,16 +1305,9 @@ class PwnCompanion(Plugin):
         """
         self._agent = agent
         try:
-            # Fallback discovery start: if no bt-tether event ever started us but a
-            # Bluetooth-PAN interface is up, begin discovery anyway so we can connect.
-            if not self.discovering and not self.app_connected:
-                iface = self._detect_bnep_interface()
-                if iface:
-                    log.info(
-                        f"[pwn-companion] bnep interface '{iface}' detected without a "
-                        f"bt-tether event — starting discovery"
-                    )
-                    self._start_client_discovery(iface)
+            # Fallback discovery start (also handled by the background watchdog, so
+            # this still works when epochs aren't firing).
+            self._ensure_discovery()
 
             # Per-channel stats — only when this epoch reports a channel. (This
             # pwnagotchi's epoch_data often has no 'channel' key; we must NOT bail
