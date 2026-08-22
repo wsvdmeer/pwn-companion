@@ -1258,6 +1258,17 @@ private fun ConsoleCommandBar(
             onDismiss = { pendingMode = null },
         )
     }
+    // Device power confirmation — same sheet-based confirm as the mode switch (reboot/shutdown
+    // are disruptive, and shutdown means a physical power-cycle to recover). null = nothing
+    // pending; true = shutdown; false = reboot.
+    var pendingPower by remember { mutableStateOf<Boolean?>(null) }
+    pendingPower?.let { isShutdown ->
+        PowerActionSheet(
+            shutdown = isShutdown,
+            onConfirm = { pendingPower = null; if (isShutdown) onShutdown() else onReboot() },
+            onDismiss = { pendingPower = null },
+        )
+    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             // Mode toggle — only meaningful while a pwnagotchi is actually LINKED (not merely
@@ -1280,12 +1291,12 @@ private fun ConsoleCommandBar(
                     CmdAction("start service", MaterialTheme.colorScheme.primary, Modifier.weight(1f), onToggleService)
             }
         }
-        // Device power — reboot / shutdown the Pi. Only while linked; two taps to confirm (a
-        // shutdown means the Pi won't come back without a physical power-cycle).
+        // Device power — reboot / shutdown the Pi. Only while linked; tapping arms a confirm
+        // sheet (a shutdown means the Pi won't come back without a physical power-cycle).
         if (deviceConnected) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                ConfirmCmdAction("reboot pi", MaterialTheme.colorScheme.tertiary, Modifier.weight(1f), onReboot)
-                ConfirmCmdAction("shutdown pi", MaterialTheme.colorScheme.error, Modifier.weight(1f), onShutdown)
+                CmdAction("reboot pi", MaterialTheme.colorScheme.tertiary, Modifier.weight(1f)) { pendingPower = false }
+                CmdAction("shutdown pi", MaterialTheme.colorScheme.error, Modifier.weight(1f)) { pendingPower = true }
             }
         }
     }
@@ -1331,16 +1342,42 @@ private fun ModeSwitchSheet(toAuto: Boolean, onConfirm: () -> Unit, onDismiss: (
     }
 }
 
-/** A [CmdAction] that needs two taps: the first arms it ("confirm …?"), the second fires. */
+/**
+ * Confirmation for a device power action (reboot / shutdown). Mirrors [ModeSwitchSheet]: a
+ * terminal-styled bottom sheet matching the app's other sheets rather than a stock dialog. A
+ * shutdown is called out as unrecoverable without a physical power-cycle.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ConfirmCmdAction(label: String, color: Color, modifier: Modifier = Modifier, onConfirm: () -> Unit) {
-    var armed by remember { mutableStateOf(false) }
-    CmdAction(
-        if (armed) "confirm $label?" else label,
-        if (armed) MaterialTheme.colorScheme.error else color,
-        modifier,
+private fun PowerActionSheet(shutdown: Boolean, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    val accent = if (shutdown) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.tertiary
+    val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF02060A),
+        contentColor = accent,
     ) {
-        if (armed) { onConfirm(); armed = false } else armed = true
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                if (shutdown) "[ shutdown pi ]" else "[ reboot pi ]",
+                color = accent, fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = TerminalMono,
+            )
+            Text(
+                if (shutdown) "Power the pwnagotchi off. It won't come back until you physically power-cycle it."
+                else "Restart the pwnagotchi. The link drops and re-establishes once it's back up.",
+                color = dim, fontSize = 11.sp, lineHeight = 16.sp, fontFamily = TerminalMono,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                CmdAction("cancel", dim, Modifier.weight(1f), onDismiss)
+                CmdAction("confirm", accent, Modifier.weight(1f), onConfirm)
+            }
+        }
     }
 }
 

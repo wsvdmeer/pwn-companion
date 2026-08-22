@@ -4,6 +4,22 @@ All significant changes to PwnCompanion, most recent first.
 
 ---
 
+## Session — 2026-08-22 (manual-mode discovery watchdog · power confirm sheet)
+
+App `1.2.5` (build 11) · plugin `2.2.0`
+
+### Plugin — bootstrap discovery via a watchdog
+| Area | Detail |
+|------|--------|
+| Manual-mode fix | Discovery was started only from the bt-tether connect event, with an `on_epoch` fallback. MANUAL mode never epochs, so that fallback was dead — a missed one-shot connect event left the plugin idle forever. A 30s background watchdog now re-checks and starts discovery whenever a BT-PAN interface is up but we're neither discovering nor connected. Shared `_ensure_discovery()` behaves identically with or without epochs; `_start_client_discovery` is lock-guarded/idempotent so the extra caller can't double-start |
+
+### App
+| Area | Detail |
+|------|--------|
+| Power confirm sheet | `reboot pi` / `shutdown pi` in the command bar now confirm via a terminal-styled bottom sheet (matching the mode-switch sheet) instead of the inline two-tap. Shutdown is called out as unrecoverable without a physical power-cycle |
+
+---
+
 ## Session — 2026-08-20 (new-pwnagotchi pcapng · mode-switch guard)
 
 App `1.2.4` (build 10) · plugin `2.1.0`
