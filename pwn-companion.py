@@ -1327,6 +1327,11 @@ class PwnCompanion(Plugin):
                 if rssi is not None:
                     msg["autotune_min_rssi"] = rssi
 
+                # Report the adapter's real supported channels so the app can steer 5 GHz.
+                supported = self._supported_channels(agent)
+                if supported:
+                    msg["supported_channels"] = supported
+
                 self._schedule_on_loop(
                     self._send_to_app(msg),
                     self.loop
@@ -2473,9 +2478,32 @@ class PwnCompanion(Plugin):
             rssi = self._autotune_min_rssi()
             if rssi is not None:
                 msg["autotune_min_rssi"] = rssi
+            supported = self._supported_channels(agent)
+            if supported:
+                msg["supported_channels"] = supported
             await self._send_to_app(msg)
         except Exception as e:
             log.debug(f"[pwn-companion] Error sending autotune stats: {e}")
+
+    def _supported_channels(self, agent):
+        """The monitor interface's supported channels (reg-domain aware), or None.
+
+        pwnagotchi's Agent exposes supported_channels, computed from `iw phy channels`
+        (which already excludes disabled/unavailable channels), so it reflects the real
+        adapter + regulatory domain. Reporting it lets the app's steering bandit discover
+        5 GHz on dual-band dongles instead of a hardcoded 2.4 GHz list. Returns None on
+        older cores / if unavailable, so the app keeps its 2.4 GHz fallback.
+        """
+        try:
+            sc = getattr(agent, "supported_channels", None)
+            if callable(sc):
+                sc = sc()
+            if sc:
+                chans = sorted({int(c) for c in sc if 1 <= int(c) <= 165})
+                return chans or None
+        except Exception:
+            pass
+        return None
 
     def _autotune_min_rssi(self):
         """The channel-tuning plugin's current min_rssi threshold, or None.

@@ -117,6 +117,12 @@ data class ScreenData(
     @SerialName("autotune_min_rssi")
     val autotuneMinRssi: Int? = null,
 
+    // The channels the device's monitor interface actually supports (reg-domain aware).
+    // Lets the steering bandit discover 5 GHz on dual-band adapters instead of a
+    // hardcoded 2.4 GHz list. Null on older plugins → app falls back to the 2.4 floor.
+    @SerialName("supported_channels")
+    val supportedChannels: List<Int>? = null,
+
     // Whether the device's wpa-sec cracking plugin is enabled + downloading results
     // (reported in status messages), so the app can flag if cracking is actually on.
     @SerialName("wpa_sec_enabled")  val wpaSecEnabled: Boolean? = null,

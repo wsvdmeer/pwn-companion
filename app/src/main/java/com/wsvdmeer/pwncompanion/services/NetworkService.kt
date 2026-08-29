@@ -612,6 +612,7 @@ class NetworkService(private val context: Context) {
                     autotuneChannels = data.autotuneChannels ?: currentState.autotuneChannels,
                     autotuneBestChannel = data.autotuneBestChannel ?: currentState.autotuneBestChannel,
                     autotuneMinRssi = data.autotuneMinRssi ?: currentState.autotuneMinRssi,
+                    supportedChannels = data.supportedChannels ?: currentState.supportedChannels,
                     // Merge capture history: the plugin sends the full log on connect and
                     // single-entry appends on each new handshake. Dedupe by key (BSSID),
                     // newest first, keeping the richer (incoming) record on collision.
