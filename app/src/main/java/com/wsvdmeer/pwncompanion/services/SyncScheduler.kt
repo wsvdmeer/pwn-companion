@@ -159,17 +159,29 @@ class SyncScheduler(
                 return
             }
 
-            // ── Device ground truth: autotune per-channel stats ───────────────────
-            // The pwnagotchi's own per-channel tally: handshakes landed AND live client
-            // density (sta). Clients are the deauth targets, so a channel busy with
-            // clients right now is a fresh opportunity, not just where old handshakes fell.
+            // ── Device signals (best-effort, NOT preconditions) ───────────────────
+            // autotune = the plugin's per-channel handshake/client tally. On modern
+            // pwnagotchi (>= 2.9.5.5, "strategy" core) epoch_data carries no channel, so
+            // this stays empty — treat it as a bonus when present, never a gate.
             val auto = autotuneStats()
             val hasAuto = auto.values.any { it.handshakes > 0 || it.sta > 0 }
 
             val stats = memoryService.getLearningStats()
             val haveLearning = stats.totalObservations >= minObservationsToSteer
-            if (!haveLearning && !hasAuto) {
-                Log.d(tag, "Only ${stats.totalObservations} observations and no autotune data — not steering yet")
+
+            // Candidate universe: the channels the DEVICE actually supports (authoritative,
+            // reg-domain aware) so dual-band adapters' 5 GHz channels are discoverable — not
+            // a hardcoded 2.4 GHz list. Fall back to the 2.4 floor until the device reports.
+            val supported = supportedChannels().filter { it in 1..165 }.toSet()
+            val discoveryBase = supported.ifEmpty { (1..11).toSet() }
+
+            // Cold start: with no learned yield AND no autotune (the norm on new pwnagotchi,
+            // where autotune never populates), don't sit idle — fall through to a pure-
+            // exploration steer across the supported channels so recon covers both bands from
+            // cycle one and the learning DB starts filling. Only bail if there's genuinely
+            // nothing to explore.
+            if (!haveLearning && !hasAuto && discoveryBase.isEmpty()) {
+                Log.d(tag, "no learning, no autotune, no channel list — not steering yet")
                 return
             }
 
@@ -208,12 +220,8 @@ class SyncScheduler(
                 return s
             }
 
-            // Candidate universe: what the DEVICE actually supports (authoritative and
-            // reg-domain aware) so a dual-band adapter's 5 GHz channels are discoverable —
-            // not a hardcoded 2.4 GHz list. Fall back to the 2.4 floor (1–11) until the
-            // device reports its channels (older plugin / before first telemetry).
-            val supported = supportedChannels().filter { it in 1..165 }.toSet()
-            val discoveryBase = supported.ifEmpty { (1..11).toSet() }
+            // Candidates: the supported-channel discovery base plus everything we know about
+            // (learned yield / here / now / untapped), intersected with what the device can do.
             val candidates = buildSet {
                 addAll(discoveryBase); addAll(auto.keys); addAll(yieldByCh.keys); addAll(hourly); addAll(nearby); untap?.let { add(it) }
             }.filter { it in 1..165 && (supported.isEmpty() || it in supported) }
