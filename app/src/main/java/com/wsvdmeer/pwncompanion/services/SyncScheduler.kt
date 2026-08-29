@@ -28,6 +28,11 @@ class SyncScheduler(
     // pwnagotchi itself and doesn't depend on the app having logged events while
     // connected. Keyed by channel number. Empty when no autotune data has arrived.
     private val autotuneStats: () -> Map<Int, com.wsvdmeer.pwncompanion.models.AutotuneChannelStat> = { emptyMap() },
+    // The channels the device's monitor interface actually supports (reg-domain aware,
+    // reported by the plugin). This is the authoritative candidate universe for steering,
+    // so a dual-band adapter's 5 GHz channels are discoverable instead of a hardcoded 2.4
+    // list. Empty when unknown (older plugin / before first report) → 2.4 GHz floor fallback.
+    private val supportedChannels: () -> Set<Int> = { emptySet() },
     // Whether the device is actively hunting (AUTO). In MANUAL the device isn't
     // scanning, so steering its recon is pointless — we skip it entirely (no command,
     // no log spam) until the user goes back to AUTO.
@@ -203,15 +208,24 @@ class SyncScheduler(
                 return s
             }
 
-            // Candidates: everything we know about PLUS the 2.4GHz floor (1–11) so the
-            // bandit can explore channels we've seen no activity on yet (discovery).
+            // Candidate universe: what the DEVICE actually supports (authoritative and
+            // reg-domain aware) so a dual-band adapter's 5 GHz channels are discoverable —
+            // not a hardcoded 2.4 GHz list. Fall back to the 2.4 floor (1–11) until the
+            // device reports its channels (older plugin / before first telemetry).
+            val supported = supportedChannels().filter { it in 1..165 }.toSet()
+            val discoveryBase = supported.ifEmpty { (1..11).toSet() }
             val candidates = buildSet {
-                addAll(1..11); addAll(auto.keys); addAll(yieldByCh.keys); addAll(hourly); addAll(nearby); untap?.let { add(it) }
-            }.filter { it in 1..165 }
+                addAll(discoveryBase); addAll(auto.keys); addAll(yieldByCh.keys); addAll(hourly); addAll(nearby); untap?.let { add(it) }
+            }.filter { it in 1..165 && (supported.isEmpty() || it in supported) }
 
             // UCB1 (pure, in ChannelBandit): normalised exploit + an exploration bonus that's
             // large for under-sampled channels and shrinks as we sample them; decaying pulls
-            // make it re-explore over time.
+            // make it re-explore over time. With the newly-supported 5 GHz channels now in the
+            // candidate pool, UCB handles band balance on its own: a fresh 5 GHz arm outscores
+            // even a constantly-picked 2.4 channel (whose exploration bonus has shrunk), so it
+            // gets sampled; if the band is dead it decays away, and pull-decay re-checks it
+            // periodically. No separate band-diversity guard needed (it would just waste hops
+            // in genuinely 2.4-only areas).
             val topChannels = bandit.select(candidates, 3) { exploit(it) }
             if (topChannels.isEmpty()) return
 
