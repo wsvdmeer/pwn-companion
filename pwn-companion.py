@@ -2463,11 +2463,15 @@ class PwnCompanion(Plugin):
     async def _send_autotune_stats(self, agent):
         """Push auto-tune channel efficiency stats to the app."""
         try:
-            if not self._channel_stats:
-                return
+            # supported_channels must go out even when there are NO per-channel stats:
+            # on modern pwnagotchi epoch_data has no channel, so _channel_stats stays
+            # empty forever — but the app still needs the supported list to steer 5 GHz.
+            supported = self._supported_channels(agent)
             # Snapshot under the lock — on_epoch mutates this on another thread.
             with self.lock:
                 channels_payload = {str(c): dict(v) for c, v in self._channel_stats.items()}
+            if not channels_payload and not supported:
+                return
             msg = {
                 "type": "autotune_stats",
                 "autotune_channels": channels_payload,
@@ -2478,7 +2482,6 @@ class PwnCompanion(Plugin):
             rssi = self._autotune_min_rssi()
             if rssi is not None:
                 msg["autotune_min_rssi"] = rssi
-            supported = self._supported_channels(agent)
             if supported:
                 msg["supported_channels"] = supported
             await self._send_to_app(msg)
