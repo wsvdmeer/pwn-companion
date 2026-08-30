@@ -216,9 +216,14 @@ data class CaptureEntry(
     // hashcat-22000 line (WPA*01 PMKID / WPA*02 EAPOL) from the plugin's hcxpcapngtool, for
     // on-phone cracking. Null when the grab isn't crackable or the tool was unavailable.
     @SerialName("hash22000") val hash22000: String? = null,
+    // The AP's channel, from the plugin (on_handshake / gps sidecar). Null = unknown
+    // (older plugin, or a pre-channel capture) — the band tag is just hidden then.
+    @SerialName("channel")   val channel: Int? = null,
 ) {
     /** Stable identity for de-duping across reconnects / live appends. */
     val key: String get() = if (bssid.isNotBlank()) bssid else "$ssid@$timestamp"
+    /** Radio band derived from the channel: "2.4" | "5" | null when unknown. */
+    val band: String? get() = channel?.let { if (it in 1..14) "2.4" else if (it >= 36) "5" else null }
     val isGeolocated: Boolean get() = latitude != null && longitude != null
     /** True when the capture yields a crackable hash (PMKID or full EAPOL). */
     val isCrackable: Boolean get() = quality == "eapol" || quality == "pmkid"
