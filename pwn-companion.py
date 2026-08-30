@@ -835,6 +835,10 @@ class PwnCompanion(Plugin):
             # Increment running total
             self._total_handshakes += 1
 
+            # Per-channel ground truth — attribute the capture to the AP's real channel
+            # (incl. 5 GHz), since epoch_data has none on modern pwnagotchi.
+            self._bump_channel_stat(ap_channel, "handshakes")
+
             # Fire AI network_event immediately — this is the main driver of AI responses
             if self.event_broadcaster and self.app_connected:
                 self._schedule_on_loop(
@@ -1212,7 +1216,8 @@ class PwnCompanion(Plugin):
             security = ap.get("encryption", "Unknown")
             bssid = ap.get("mac", None)
 
-            log.info(f"[pwn-companion]  Association: {ssid} CH{channel} ({rssi}dBm)")
+            self._bump_channel_stat(channel, "associations")
+            log.debug(f"[pwn-companion]  Association: {ssid} CH{channel} ({rssi}dBm)")
 
             if self.event_broadcaster and self.app_connected:
                 self._schedule_on_loop(
@@ -1235,6 +1240,7 @@ class PwnCompanion(Plugin):
             channel = ap.get("channel", 0) if isinstance(ap, dict) else 0
             ssid = (ap.get("hostname", "") or ap.get("essid", "")) if isinstance(ap, dict) else str(ap)
             bssid = (ap.get("mac", "") or ap.get("bssid", "")) if isinstance(ap, dict) else ""
+            self._bump_channel_stat(channel, "deauths")
             # The deauth TARGET is a client station MAC — previously ignored, which is why
             # the app's log line had nothing to show and fell back to "spectrum".
             sta_mac = station.get("mac", "") if isinstance(station, dict) else ""
@@ -1253,6 +1259,30 @@ class PwnCompanion(Plugin):
                 )
         except Exception as e:
             log.debug(f"[pwn-companion] Error in on_deauthentication: {e}")
+
+    def _bump_channel_stat(self, channel, key, n=1):
+        """Record per-channel ground truth keyed by the AP's REAL channel.
+
+        On pwnagotchi >= 2.9.5.5 epoch_data carries no channel, so this — driven off the
+        AP dict in on_handshake/on_association/on_deauthentication — is the only working
+        source of per-channel handshake/assoc/deauth counts (incl. 5 GHz). The app uses it
+        to steer toward the channels that actually yield.
+        """
+        try:
+            ch = int(channel)
+        except (TypeError, ValueError):
+            return
+        if not (1 <= ch <= 165):
+            return
+        with self.lock:
+            st = self._channel_stats.setdefault(
+                ch, {"handshakes": 0, "deauths": 0, "associations": 0, "aps": 0, "sta": 0}
+            )
+            st[key] = st.get(key, 0) + n
+            if key == "handshakes":
+                self._best_channel = max(
+                    self._channel_stats, key=lambda c: self._channel_stats[c]["handshakes"]
+                )
 
     def on_epoch(self, agent, epoch, epoch_data):
         """
@@ -1305,6 +1335,30 @@ class PwnCompanion(Plugin):
                     f"da={epoch_data.get('num_deauths',0)} "
                     f"as={epoch_data.get('num_associations',0)}"
                 )
+
+            # Per-channel target density from the live scan (epoch_data has no per-channel
+            # data on modern pwnagotchi). APs + clients per channel = the "clients here now"
+            # signal the app weights heavily for steering. Snapshot each epoch, not cumulative.
+            try:
+                aps = agent.get_access_points() or []
+                with self.lock:
+                    for st in self._channel_stats.values():
+                        st["aps"] = 0
+                        st["sta"] = 0
+                    for ap in aps:
+                        c = ap.get("channel") if isinstance(ap, dict) else None
+                        if not c:
+                            continue
+                        c = int(c)
+                        if not (1 <= c <= 165):
+                            continue
+                        st = self._channel_stats.setdefault(
+                            c, {"handshakes": 0, "deauths": 0, "associations": 0, "aps": 0, "sta": 0}
+                        )
+                        st["aps"] += 1
+                        st["sta"] += len(ap.get("clients", []) or [])
+            except Exception as e:
+                log.debug(f"[pwn-companion] per-channel density tally skipped: {e}")
 
             # Send autotune_stats to app if connected
             if self.app_connected and self._channel_stats:
