@@ -457,6 +457,7 @@ class NetworkService(private val context: Context) {
         scope.launch {
             // Merge onto any state a message already created (capture_history can land before this
             // registration coroutine runs) so we set the connection fields without wiping captures.
+            val liveIds = webSocketServer.getConnectedClientIds()
             _deviceStates.update { states ->
                 val base = states[deviceId] ?: DeviceState(
                     deviceId = deviceId, deviceName = deviceName,
@@ -470,7 +471,14 @@ class NetworkService(private val context: Context) {
                     isConnected = true,
                     connectionState = DeviceState.ConnectionState.CONNECTED,
                 )
-                states.toMutableMap().apply { put(deviceId, state) }
+                // Reconcile so a reconnect (which arrives under a NEW session id) can't leave a
+                // stale twin behind — the "2 nodes online" / flipping-image bug. Keep only
+                // entries whose socket is still live AND that aren't the same physical device
+                // (same IP) as the one just (re)connecting; then add the fresh state.
+                states.filterKeys { it in liveIds }
+                    .filterValues { it.ipAddress != clientIp }
+                    .toMutableMap()
+                    .apply { put(deviceId, state) }
             }
             _connectedDeviceCount.value = webSocketServer.getConnectedClientCount()
 

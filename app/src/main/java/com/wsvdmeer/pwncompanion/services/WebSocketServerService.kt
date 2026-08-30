@@ -258,6 +258,9 @@ class WebSocketServerService(
      */
     fun getConnectedClientCount(): Int = connectedClients.size
 
+    /** Live socket session ids — used to reconcile device state and evict stale reconnect twins. */
+    fun getConnectedClientIds(): Set<String> = connectedClients.keys.toSet()
+
     /**
      * Get list of connected devices.
      */
