@@ -234,18 +234,29 @@ class SyncScheduler(
             // since that's where real per-channel yield lives now that ground truth is restored).
             val exploitTop = bandit.select(candidates, 2) { exploit(it) }
 
-            // One RESERVED EXPLORE slot: round-robin across the full supported spectrum so every
-            // channel — crucially 5 GHz — keeps getting revisited even when dense-2.4 exploit would
-            // otherwise starve it. This breaks the chicken-and-egg (can't earn 5 GHz yield without
-            // ever hunting 5 GHz). If a 5 GHz channel does start yielding, it also wins exploit slots.
+            // One RESERVED EXPLORE slot, rotating through the band the exploit slots are NOT
+            // covering. Clients (hence exploit) live on 2.4, so this keeps the 3rd slot on 5 GHz
+            // — hunting 5 GHz EVERY cycle instead of only after walking all of 2.4 first. Breaks
+            // the chicken-and-egg (can't earn 5 GHz yield without ever hunting 5 GHz); a yielding
+            // 5 GHz channel still also wins exploit slots. Falls back to the whole spectrum if the
+            // device is single-band.
             val sortedCand = candidates.sorted()
+            val band24 = sortedCand.filter { it <= 14 }
+            val band5 = sortedCand.filter { it > 14 }
+            val exploit5 = exploitTop.count { it > 14 }
+            val exploit24 = exploitTop.size - exploit5
+            val pool = when {
+                exploit24 >= exploit5 && band5.isNotEmpty() -> band5   // exploit leans 2.4 → explore 5 GHz
+                band24.isNotEmpty() -> band24                          // exploit leans 5 GHz → explore 2.4
+                else -> sortedCand
+            }
             var exploreCh: Int? = null
-            if (sortedCand.isNotEmpty()) {
-                for (i in sortedCand.indices) {
-                    val c = sortedCand[(exploreIdx + i) % sortedCand.size]
+            if (pool.isNotEmpty()) {
+                for (i in pool.indices) {
+                    val c = pool[(exploreIdx + i) % pool.size]
                     if (c !in exploitTop) {
                         exploreCh = c
-                        exploreIdx = (exploreIdx + i + 1) % sortedCand.size
+                        exploreIdx = (exploreIdx + i + 1) % pool.size
                         break
                     }
                 }

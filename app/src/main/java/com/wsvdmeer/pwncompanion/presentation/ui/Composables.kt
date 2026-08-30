@@ -856,7 +856,7 @@ private fun ConsoleSteeringBlock(
             val g24 = spectrum.filter { it <= 14 }
             val g5 = spectrum.filter { it > 14 }
             Row(modifier = Modifier.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("recon".padEnd(7) + ": ", color = dim, fontSize = 12.sp, lineHeight = 18.sp)
+                Text("chans".padEnd(7) + ": ", color = dim, fontSize = 12.sp, lineHeight = 18.sp)
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(2.dp),
@@ -875,7 +875,7 @@ private fun ConsoleSteeringBlock(
         }
         tuning?.let { t ->
             ConsoleBarRow("rssi", rangeFrac(t.minRssi, -90, -55), "${t.minRssi}dBm", primary)
-            ConsoleBarRow("recon", rangeFrac(t.reconTime, 10, 60), "${t.reconTime}s", primary)
+            ConsoleBarRow("dwell", rangeFrac(t.reconTime, 10, 60), "${t.reconTime}s", primary)
             ConsoleBarRow("ap ttl", rangeFrac(t.apTtl, 30, 300), "${t.apTtl}s", dim)
             ConsoleBarRow("sta ttl", rangeFrac(t.staTtl, 60, 600), "${t.staTtl}s", dim)
             ConsoleBarRow("hop", rangeFrac(t.hopRecon, 2, 30), "${t.hopRecon}s", dim)
