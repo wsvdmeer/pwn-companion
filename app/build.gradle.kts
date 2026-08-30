@@ -27,7 +27,7 @@ android {
         minSdk = 29
         targetSdk = 36
         versionCode = 18
-        versionName = "1.2.12"
+        versionName = "1.2.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Native cracker (libwpacrack.so) — small PBKDF2 kernel for on-phone cracking. arm64 is
