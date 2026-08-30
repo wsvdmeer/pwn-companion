@@ -3,6 +3,8 @@ package com.wsvdmeer.pwncompanion.presentation.ui
 import kotlin.math.roundToInt
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -495,7 +497,7 @@ fun MainContentArea(
         // ── steering — live: the channels + params the phone is working right now ──
         if (connectedDevices.isNotEmpty() && (channelPriority.isNotEmpty() || tuning != null)) {
             item {
-                ConsoleSteeringBlock(channelPriority, tuning)
+                ConsoleSteeringBlock(channelPriority, tuning, device?.supportedChannels ?: emptyList())
                 ConsoleRule()
             }
         }
@@ -834,6 +836,7 @@ private fun rangeFrac(v: Int, lo: Int, hi: Int): Float =
 private fun ConsoleSteeringBlock(
     channels: List<Int>,
     tuning: com.wsvdmeer.pwncompanion.models.TuningState?,
+    supportedChannels: List<Int> = emptyList(),
 ) {
     val primary = MaterialTheme.colorScheme.primary
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
@@ -842,15 +845,33 @@ private fun ConsoleSteeringBlock(
         ConsoleLabel("[ steering ]")
         Spacer(modifier = Modifier.height(4.dp))
         if (channels.isNotEmpty()) {
+            // Spectrum across BOTH bands: 2.4 GHz (1–14), a gap, then the 5 GHz channels the
+            // device actually supports — so steered 5 GHz channels light up too, not just 1–11.
+            val spectrum = remember(supportedChannels) {
+                (if (supportedChannels.isNotEmpty()) supportedChannels
+                 else listOf(1,2,3,4,5,6,7,8,9,10,11,12,13,
+                             36,40,44,48,52,56,60,64,100,104,108,112,116,120,124,128,132,136,140,144,
+                             149,153,157,161,165)).sorted()
+            }
+            val g24 = spectrum.filter { it <= 14 }
+            val g5 = spectrum.filter { it > 14 }
             Row(modifier = Modifier.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("recon".padEnd(7) + ": ", color = dim, fontSize = 12.sp, lineHeight = 18.sp)
-                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    (1..11).forEach { ch ->
-                        Box(Modifier.size(width = 8.dp, height = 11.dp).background(if (ch in channels) primary else off))
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    g24.forEach { ch ->
+                        Box(Modifier.size(width = 6.dp, height = 11.dp).background(if (ch in channels) primary else off))
+                    }
+                    if (g5.isNotEmpty()) Spacer(Modifier.width(6.dp))
+                    g5.forEach { ch ->
+                        Box(Modifier.size(width = 6.dp, height = 11.dp).background(if (ch in channels) primary else off))
                     }
                 }
-                Text("  ch ${channels.joinToString(",")}", color = primary, fontSize = 12.sp, lineHeight = 18.sp, maxLines = 1)
             }
+            Text("ch ${channels.joinToString(",")}", color = primary, fontSize = 12.sp, lineHeight = 18.sp, maxLines = 1)
         }
         tuning?.let { t ->
             ConsoleBarRow("rssi", rangeFrac(t.minRssi, -90, -55), "${t.minRssi}dBm", primary)
