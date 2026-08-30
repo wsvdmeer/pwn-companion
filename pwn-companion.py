@@ -143,7 +143,7 @@ class PwnagotchiEventBroadcaster:
                 "description": f"Captured {count} handshake{'s' if count != 1 else ''} from {network_name} ({security})"
             }
 
-            log.info(f"[pwn-companion]  AI Event: {event['description']}")
+            log.debug(f"[pwn-companion]  AI Event: {event['description']}")
             await self.send_to_app(event)
         except Exception as e:
             log.error(f"[pwn-companion] Error in on_handshakes_captured: {e}")
@@ -178,7 +178,7 @@ class PwnagotchiEventBroadcaster:
             }
 
             if is_new:
-                log.info(f"[pwn-companion]  AI Event: {event['description']}")
+                log.debug(f"[pwn-companion]  AI Event: {event['description']}")
                 await self.send_to_app(event)
         except Exception as e:
             log.error(f"[pwn-companion] Error in on_network_discovered: {e}")
@@ -201,7 +201,7 @@ class PwnagotchiEventBroadcaster:
                 "description": f"Successfully connected to {network_name}" + (f" in {duration:.1f}s" if duration > 0 else "")
             }
 
-            log.info(f"[pwn-companion]  AI Event: {event['description']}")
+            log.debug(f"[pwn-companion]  AI Event: {event['description']}")
             await self.send_to_app(event)
         except Exception as e:
             log.error(f"[pwn-companion] Error in on_connection_success: {e}")
@@ -281,7 +281,7 @@ class PwnagotchiEventBroadcaster:
                 "description": f"High-value target found: {network_name}" + (f" ({reason})" if reason else "")
             }
 
-            log.info(f"[pwn-companion]  AI Event: {event['description']}")
+            log.debug(f"[pwn-companion]  AI Event: {event['description']}")
             await self.send_to_app(event)
         except Exception as e:
             log.error(f"[pwn-companion] Error in on_high_value_target: {e}")
@@ -305,7 +305,7 @@ class PwnagotchiEventBroadcaster:
                 "description": f"Scan complete: Found {networks_found} networks" + (f" in {duration:.1f}s" if duration > 0 else "")
             }
 
-            log.info(f"[pwn-companion]  AI Event: {event['description']}")
+            log.debug(f"[pwn-companion]  AI Event: {event['description']}")
             await self.send_to_app(event)
         except Exception as e:
             log.error(f"[pwn-companion] Error in on_scan_complete: {e}")
@@ -835,6 +835,10 @@ class PwnCompanion(Plugin):
             # Increment running total
             self._total_handshakes += 1
 
+            # Per-channel ground truth — attribute the capture to the AP's real channel
+            # (incl. 5 GHz), since epoch_data has none on modern pwnagotchi.
+            self._bump_channel_stat(ap_channel, "handshakes")
+
             # Fire AI network_event immediately — this is the main driver of AI responses
             if self.event_broadcaster and self.app_connected:
                 self._schedule_on_loop(
@@ -869,6 +873,7 @@ class PwnCompanion(Plugin):
                     "accuracy": self.last_gps.get("accuracy"),
                     "altitude": self.last_gps.get("altitude"),
                     "timestamp": self.last_gps.get("timestamp"),
+                    "channel": ap_channel,   # so a rescan can still show 2.4/5 GHz band
                 }
                 try:
                     with open(gps_filename, "w") as fp:
@@ -892,6 +897,8 @@ class PwnCompanion(Plugin):
                     "bssid": cap_bssid,
                     "timestamp": (self.last_gps.get("timestamp") if has_gps else None) or int(time.time()),
                 }
+                if ap_channel:
+                    entry["channel"] = ap_channel   # lets the app tag this capture 2.4/5 GHz
                 if has_gps:
                     entry["latitude"] = self.last_gps.get("latitude")
                     entry["longitude"] = self.last_gps.get("longitude")
@@ -1145,6 +1152,8 @@ class PwnCompanion(Plugin):
                             entry["accuracy"] = gps.get("accuracy")
                             if gps.get("timestamp"):
                                 entry["timestamp"] = int(gps["timestamp"])
+                        if gps.get("channel"):
+                            entry["channel"] = gps["channel"]   # 2.4/5 GHz band on rescan
                     except Exception as e:
                         log.debug(f"[pwn-companion] Bad gps sidecar {gps_path}: {e}")
 
@@ -1212,7 +1221,8 @@ class PwnCompanion(Plugin):
             security = ap.get("encryption", "Unknown")
             bssid = ap.get("mac", None)
 
-            log.info(f"[pwn-companion]  Association: {ssid} CH{channel} ({rssi}dBm)")
+            self._bump_channel_stat(channel, "associations")
+            log.debug(f"[pwn-companion]  Association: {ssid} CH{channel} ({rssi}dBm)")
 
             if self.event_broadcaster and self.app_connected:
                 self._schedule_on_loop(
@@ -1235,6 +1245,7 @@ class PwnCompanion(Plugin):
             channel = ap.get("channel", 0) if isinstance(ap, dict) else 0
             ssid = (ap.get("hostname", "") or ap.get("essid", "")) if isinstance(ap, dict) else str(ap)
             bssid = (ap.get("mac", "") or ap.get("bssid", "")) if isinstance(ap, dict) else ""
+            self._bump_channel_stat(channel, "deauths")
             # The deauth TARGET is a client station MAC — previously ignored, which is why
             # the app's log line had nothing to show and fell back to "spectrum".
             sta_mac = station.get("mac", "") if isinstance(station, dict) else ""
@@ -1253,6 +1264,30 @@ class PwnCompanion(Plugin):
                 )
         except Exception as e:
             log.debug(f"[pwn-companion] Error in on_deauthentication: {e}")
+
+    def _bump_channel_stat(self, channel, key, n=1):
+        """Record per-channel ground truth keyed by the AP's REAL channel.
+
+        On pwnagotchi >= 2.9.5.5 epoch_data carries no channel, so this — driven off the
+        AP dict in on_handshake/on_association/on_deauthentication — is the only working
+        source of per-channel handshake/assoc/deauth counts (incl. 5 GHz). The app uses it
+        to steer toward the channels that actually yield.
+        """
+        try:
+            ch = int(channel)
+        except (TypeError, ValueError):
+            return
+        if not (1 <= ch <= 165):
+            return
+        with self.lock:
+            st = self._channel_stats.setdefault(
+                ch, {"handshakes": 0, "deauths": 0, "associations": 0, "aps": 0, "sta": 0}
+            )
+            st[key] = st.get(key, 0) + n
+            if key == "handshakes":
+                self._best_channel = max(
+                    self._channel_stats, key=lambda c: self._channel_stats[c]["handshakes"]
+                )
 
     def on_epoch(self, agent, epoch, epoch_data):
         """
@@ -1306,6 +1341,30 @@ class PwnCompanion(Plugin):
                     f"as={epoch_data.get('num_associations',0)}"
                 )
 
+            # Per-channel target density from the live scan (epoch_data has no per-channel
+            # data on modern pwnagotchi). APs + clients per channel = the "clients here now"
+            # signal the app weights heavily for steering. Snapshot each epoch, not cumulative.
+            try:
+                aps = agent.get_access_points() or []
+                with self.lock:
+                    for st in self._channel_stats.values():
+                        st["aps"] = 0
+                        st["sta"] = 0
+                    for ap in aps:
+                        c = ap.get("channel") if isinstance(ap, dict) else None
+                        if not c:
+                            continue
+                        c = int(c)
+                        if not (1 <= c <= 165):
+                            continue
+                        st = self._channel_stats.setdefault(
+                            c, {"handshakes": 0, "deauths": 0, "associations": 0, "aps": 0, "sta": 0}
+                        )
+                        st["aps"] += 1
+                        st["sta"] += len(ap.get("clients", []) or [])
+            except Exception as e:
+                log.debug(f"[pwn-companion] per-channel density tally skipped: {e}")
+
             # Send autotune_stats to app if connected
             if self.app_connected and self._channel_stats:
                 # Snapshot under the lock (deep-copy inner dicts) so serialisation
@@ -1326,6 +1385,11 @@ class PwnCompanion(Plugin):
                 rssi = self._autotune_min_rssi()
                 if rssi is not None:
                     msg["autotune_min_rssi"] = rssi
+
+                # Report the adapter's real supported channels so the app can steer 5 GHz.
+                supported = self._supported_channels(agent)
+                if supported:
+                    msg["supported_channels"] = supported
 
                 self._schedule_on_loop(
                     self._send_to_app(msg),
@@ -2040,7 +2104,7 @@ class PwnCompanion(Plugin):
         if raw is not None and "value" not in params:
             params = {**params, "value": raw}
 
-        log.info(f"[pwn-companion] Command received: {action}, params: {params}")
+        log.debug(f"[pwn-companion] Command received: {action}, params: {params}")
 
         with self.lock:
             self.last_command = {
@@ -2086,7 +2150,7 @@ class PwnCompanion(Plugin):
             log.warning("[pwn-companion] execute_command: empty action")
             return
 
-        log.info(f"[pwn-companion] ⚙️ Executing command: {action}")
+        log.debug(f"[pwn-companion] ⚙️ Executing command: {action}")
 
         try:
             if action in ("restart_auto", "restart_manual"):
@@ -2247,7 +2311,8 @@ class PwnCompanion(Plugin):
             if accuracy < 0:
                 raise ValueError(f"Invalid accuracy: {accuracy} (must be >= 0)")
 
-            log.info(
+            # GPS arrives every ~1-2s — DEBUG, not INFO, or it drowns the log.
+            log.debug(
                 f"[pwn-companion] ✓ GPS received: {latitude:.{GPS_COORD_PRECISION}f}, {longitude:.{GPS_COORD_PRECISION}f} (±{accuracy:.{ACCURACY_FORMAT_PRECISION}f}m, alt:{altitude:.{ACCURACY_FORMAT_PRECISION}f}m)"
             )
 
@@ -2458,11 +2523,15 @@ class PwnCompanion(Plugin):
     async def _send_autotune_stats(self, agent):
         """Push auto-tune channel efficiency stats to the app."""
         try:
-            if not self._channel_stats:
-                return
+            # supported_channels must go out even when there are NO per-channel stats:
+            # on modern pwnagotchi epoch_data has no channel, so _channel_stats stays
+            # empty forever — but the app still needs the supported list to steer 5 GHz.
+            supported = self._supported_channels(agent)
             # Snapshot under the lock — on_epoch mutates this on another thread.
             with self.lock:
                 channels_payload = {str(c): dict(v) for c, v in self._channel_stats.items()}
+            if not channels_payload and not supported:
+                return
             msg = {
                 "type": "autotune_stats",
                 "autotune_channels": channels_payload,
@@ -2473,9 +2542,31 @@ class PwnCompanion(Plugin):
             rssi = self._autotune_min_rssi()
             if rssi is not None:
                 msg["autotune_min_rssi"] = rssi
+            if supported:
+                msg["supported_channels"] = supported
             await self._send_to_app(msg)
         except Exception as e:
             log.debug(f"[pwn-companion] Error sending autotune stats: {e}")
+
+    def _supported_channels(self, agent):
+        """The monitor interface's supported channels (reg-domain aware), or None.
+
+        pwnagotchi's Agent exposes supported_channels, computed from `iw phy channels`
+        (which already excludes disabled/unavailable channels), so it reflects the real
+        adapter + regulatory domain. Reporting it lets the app's steering bandit discover
+        5 GHz on dual-band dongles instead of a hardcoded 2.4 GHz list. Returns None on
+        older cores / if unavailable, so the app keeps its 2.4 GHz fallback.
+        """
+        try:
+            sc = getattr(agent, "supported_channels", None)
+            if callable(sc):
+                sc = sc()
+            if sc:
+                chans = sorted({int(c) for c in sc if 1 <= int(c) <= 165})
+                return chans or None
+        except Exception:
+            pass
+        return None
 
     def _autotune_min_rssi(self):
         """The channel-tuning plugin's current min_rssi threshold, or None.
