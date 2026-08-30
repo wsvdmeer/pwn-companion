@@ -2045,7 +2045,7 @@ class PwnCompanion(Plugin):
         if raw is not None and "value" not in params:
             params = {**params, "value": raw}
 
-        log.info(f"[pwn-companion] Command received: {action}, params: {params}")
+        log.debug(f"[pwn-companion] Command received: {action}, params: {params}")
 
         with self.lock:
             self.last_command = {
@@ -2091,7 +2091,7 @@ class PwnCompanion(Plugin):
             log.warning("[pwn-companion] execute_command: empty action")
             return
 
-        log.info(f"[pwn-companion] ⚙️ Executing command: {action}")
+        log.debug(f"[pwn-companion] ⚙️ Executing command: {action}")
 
         try:
             if action in ("restart_auto", "restart_manual"):
@@ -2252,7 +2252,8 @@ class PwnCompanion(Plugin):
             if accuracy < 0:
                 raise ValueError(f"Invalid accuracy: {accuracy} (must be >= 0)")
 
-            log.info(
+            # GPS arrives every ~1-2s — DEBUG, not INFO, or it drowns the log.
+            log.debug(
                 f"[pwn-companion] ✓ GPS received: {latitude:.{GPS_COORD_PRECISION}f}, {longitude:.{GPS_COORD_PRECISION}f} (±{accuracy:.{ACCURACY_FORMAT_PRECISION}f}m, alt:{altitude:.{ACCURACY_FORMAT_PRECISION}f}m)"
             )
 
