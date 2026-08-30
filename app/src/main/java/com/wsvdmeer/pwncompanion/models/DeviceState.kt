@@ -24,6 +24,8 @@ data class DeviceState(
     val autotuneChannels: Map<String, AutotuneChannelStat>? = null,
     val autotuneBestChannel: Int? = null,
     val autotuneMinRssi: Int? = null,
+    /** Channels the device's monitor iface supports (reg-domain aware); null = unknown. */
+    val supportedChannels: List<Int>? = null,
     /** Geolocated handshakes captured by the device (newest first). */
     val captures: List<CaptureEntry> = emptyList(),
     /** Latest per-epoch telemetry (vitals, reward, mood counters). */
