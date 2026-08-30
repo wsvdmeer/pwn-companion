@@ -226,9 +226,13 @@ class SyncScheduler(
 
             // Candidates: the supported-channel discovery base plus everything we know about
             // (learned yield / here / now / untapped), intersected with what the device can do.
+            // EXCLUDE DFS 5 GHz channels (UNII-2): the dongle can't actively operate there without
+            // radar clearance, so steering onto them stalls recon ("blind") — and they're useless
+            // for pwning (no deauth/injection). Leaves non-DFS 5 GHz (36-48, 149-165) usable.
+            val dfs = setOf(52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144)
             val candidates = buildSet {
                 addAll(discoveryBase); addAll(auto.keys); addAll(yieldByCh.keys); addAll(hourly); addAll(nearby); untap?.let { add(it) }
-            }.filter { it in 1..165 && (supported.isEmpty() || it in supported) }
+            }.filter { it in 1..165 && it !in dfs && (supported.isEmpty() || it in supported) }
 
             // Two EXPLOIT slots via UCB1 (goes where the clients/handshakes are — usually 2.4,
             // since that's where real per-channel yield lives now that ground truth is restored).
