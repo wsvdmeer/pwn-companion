@@ -873,6 +873,7 @@ class PwnCompanion(Plugin):
                     "accuracy": self.last_gps.get("accuracy"),
                     "altitude": self.last_gps.get("altitude"),
                     "timestamp": self.last_gps.get("timestamp"),
+                    "channel": ap_channel,   # so a rescan can still show 2.4/5 GHz band
                 }
                 try:
                     with open(gps_filename, "w") as fp:
@@ -896,6 +897,8 @@ class PwnCompanion(Plugin):
                     "bssid": cap_bssid,
                     "timestamp": (self.last_gps.get("timestamp") if has_gps else None) or int(time.time()),
                 }
+                if ap_channel:
+                    entry["channel"] = ap_channel   # lets the app tag this capture 2.4/5 GHz
                 if has_gps:
                     entry["latitude"] = self.last_gps.get("latitude")
                     entry["longitude"] = self.last_gps.get("longitude")
@@ -1149,6 +1152,8 @@ class PwnCompanion(Plugin):
                             entry["accuracy"] = gps.get("accuracy")
                             if gps.get("timestamp"):
                                 entry["timestamp"] = int(gps["timestamp"])
+                        if gps.get("channel"):
+                            entry["channel"] = gps["channel"]   # 2.4/5 GHz band on rescan
                     except Exception as e:
                         log.debug(f"[pwn-companion] Bad gps sidecar {gps_path}: {e}")
 

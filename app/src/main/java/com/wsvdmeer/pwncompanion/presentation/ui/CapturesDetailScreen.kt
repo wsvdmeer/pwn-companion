@@ -432,6 +432,9 @@ private fun CaptureDetailSheet(
             )
             Spacer(Modifier.height(12.dp))
             DetailKv("bssid", capture.bssid.ifBlank { "—" }, dim, onSurface)
+            capture.band?.let { b ->
+                DetailKv("band", "${if (b == "5") "5 GHz" else "2.4 GHz"} · ch ${capture.channel}", dim, onSurface)
+            }
             DetailKv("quality", capture.quality ?: "unknown", dim, onSurface)
             DetailKv(
                 "location",
@@ -801,6 +804,14 @@ private fun CaptureDetailRow(
                     color = dim, fontSize = 10.sp, fontFamily = TerminalMono, maxLines = 1
                 )
             }
+        }
+        // Band tag (2.4/5 GHz) from the capture's channel, when known.
+        c.band?.let { b ->
+            Text(
+                if (b == "5") "5G" else "2.4G",
+                color = if (b == "5") Color(0xFF6EC1FF) else dim,
+                fontSize = 10.sp, fontFamily = TerminalMono, modifier = Modifier.padding(end = 8.dp)
+            )
         }
         // Status tag: cracked > running/queued (on-phone) > ready-to-crack > crackable > partial.
         when {
