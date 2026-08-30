@@ -73,6 +73,10 @@ class SyncScheduler(
     // one instance so its pull memory persists across cycles.
     private val bandit = ChannelBandit()
 
+    // Round-robin cursor for the reserved exploration slot — walks the full supported
+    // spectrum so 5 GHz keeps getting revisited even when 2.4 dominates the exploit score.
+    private var exploreIdx = 0
+
     // ── Personality tuner (re-implements jayofelony's removed RL param-tuner) ──
     // Context policy: ap_ttl/sta_ttl/hop set from motion. Feedback hill-climb: min_rssi
     // nudged every RSSI_WINDOW toward whatever raises the capture rate. Per-key idle
@@ -226,15 +230,27 @@ class SyncScheduler(
                 addAll(discoveryBase); addAll(auto.keys); addAll(yieldByCh.keys); addAll(hourly); addAll(nearby); untap?.let { add(it) }
             }.filter { it in 1..165 && (supported.isEmpty() || it in supported) }
 
-            // UCB1 (pure, in ChannelBandit): normalised exploit + an exploration bonus that's
-            // large for under-sampled channels and shrinks as we sample them; decaying pulls
-            // make it re-explore over time. With the newly-supported 5 GHz channels now in the
-            // candidate pool, UCB handles band balance on its own: a fresh 5 GHz arm outscores
-            // even a constantly-picked 2.4 channel (whose exploration bonus has shrunk), so it
-            // gets sampled; if the band is dead it decays away, and pull-decay re-checks it
-            // periodically. No separate band-diversity guard needed (it would just waste hops
-            // in genuinely 2.4-only areas).
-            val topChannels = bandit.select(candidates, 3) { exploit(it) }
+            // Two EXPLOIT slots via UCB1 (goes where the clients/handshakes are — usually 2.4,
+            // since that's where real per-channel yield lives now that ground truth is restored).
+            val exploitTop = bandit.select(candidates, 2) { exploit(it) }
+
+            // One RESERVED EXPLORE slot: round-robin across the full supported spectrum so every
+            // channel — crucially 5 GHz — keeps getting revisited even when dense-2.4 exploit would
+            // otherwise starve it. This breaks the chicken-and-egg (can't earn 5 GHz yield without
+            // ever hunting 5 GHz). If a 5 GHz channel does start yielding, it also wins exploit slots.
+            val sortedCand = candidates.sorted()
+            var exploreCh: Int? = null
+            if (sortedCand.isNotEmpty()) {
+                for (i in sortedCand.indices) {
+                    val c = sortedCand[(exploreIdx + i) % sortedCand.size]
+                    if (c !in exploitTop) {
+                        exploreCh = c
+                        exploreIdx = (exploreIdx + i + 1) % sortedCand.size
+                        break
+                    }
+                }
+            }
+            val topChannels = (exploitTop + listOfNotNull(exploreCh)).distinct()
             if (topChannels.isEmpty()) return
 
             // Per-cycle trace so behaviour is observable live in AUTO (adb logcat -s SyncScheduler:D):
