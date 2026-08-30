@@ -26,8 +26,8 @@ android {
         applicationId = "com.wsvdmeer.pwncompanion"
         minSdk = 29
         targetSdk = 36
-        versionCode = 13
-        versionName = "1.2.7"
+        versionCode = 14
+        versionName = "1.2.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Native cracker (libwpacrack.so) — small PBKDF2 kernel for on-phone cracking. arm64 is

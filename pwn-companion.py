@@ -143,7 +143,7 @@ class PwnagotchiEventBroadcaster:
                 "description": f"Captured {count} handshake{'s' if count != 1 else ''} from {network_name} ({security})"
             }
 
-            log.info(f"[pwn-companion]  AI Event: {event['description']}")
+            log.debug(f"[pwn-companion]  AI Event: {event['description']}")
             await self.send_to_app(event)
         except Exception as e:
             log.error(f"[pwn-companion] Error in on_handshakes_captured: {e}")
@@ -178,7 +178,7 @@ class PwnagotchiEventBroadcaster:
             }
 
             if is_new:
-                log.info(f"[pwn-companion]  AI Event: {event['description']}")
+                log.debug(f"[pwn-companion]  AI Event: {event['description']}")
                 await self.send_to_app(event)
         except Exception as e:
             log.error(f"[pwn-companion] Error in on_network_discovered: {e}")
@@ -201,7 +201,7 @@ class PwnagotchiEventBroadcaster:
                 "description": f"Successfully connected to {network_name}" + (f" in {duration:.1f}s" if duration > 0 else "")
             }
 
-            log.info(f"[pwn-companion]  AI Event: {event['description']}")
+            log.debug(f"[pwn-companion]  AI Event: {event['description']}")
             await self.send_to_app(event)
         except Exception as e:
             log.error(f"[pwn-companion] Error in on_connection_success: {e}")
@@ -281,7 +281,7 @@ class PwnagotchiEventBroadcaster:
                 "description": f"High-value target found: {network_name}" + (f" ({reason})" if reason else "")
             }
 
-            log.info(f"[pwn-companion]  AI Event: {event['description']}")
+            log.debug(f"[pwn-companion]  AI Event: {event['description']}")
             await self.send_to_app(event)
         except Exception as e:
             log.error(f"[pwn-companion] Error in on_high_value_target: {e}")
@@ -305,7 +305,7 @@ class PwnagotchiEventBroadcaster:
                 "description": f"Scan complete: Found {networks_found} networks" + (f" in {duration:.1f}s" if duration > 0 else "")
             }
 
-            log.info(f"[pwn-companion]  AI Event: {event['description']}")
+            log.debug(f"[pwn-companion]  AI Event: {event['description']}")
             await self.send_to_app(event)
         except Exception as e:
             log.error(f"[pwn-companion] Error in on_scan_complete: {e}")
