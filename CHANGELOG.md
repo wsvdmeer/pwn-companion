@@ -4,9 +4,9 @@ All significant changes to PwnCompanion, most recent first.
 
 ---
 
-## Session — 2026-08-22 (manual-mode discovery watchdog · power confirm sheet)
+## Session — 2026-09-02 (manual-mode discovery watchdog · power confirm sheet)
 
-App `1.2.5` (build 11) · plugin `2.2.0`
+App `1.2.13` (build 19) · plugin `2.2.0`
 
 ### Plugin — bootstrap discovery via a watchdog
 | Area | Detail |
@@ -17,6 +17,29 @@ App `1.2.5` (build 11) · plugin `2.2.0`
 | Area | Detail |
 |------|--------|
 | Power confirm sheet | `reboot pi` / `shutdown pi` in the command bar now confirm via a terminal-styled bottom sheet (matching the mode-switch sheet) instead of the inline two-tap. Shutdown is called out as unrecoverable without a physical power-cycle |
+
+---
+
+## Session — 5 GHz channel steering (dual-band adapters)
+
+App `1.2.12` (build 18) · plugin `2.1.0`
+
+Merged via PR #1. The hunt advisor was 2.4 GHz-only; on a dual-band adapter that left the entire 5 GHz spectrum unhunted.
+
+### App — steering
+| Area | Detail |
+|------|--------|
+| 5 GHz candidate universe | Steering now uses the device-reported **supported channels** as the candidate set instead of assuming 2.4 GHz — so 5 GHz channels become steerable targets |
+| Exploration slot | A reserved exploration slot keeps 5 GHz getting hunted rather than being starved by 2.4 GHz yield; the slot rotates onto whichever band is currently **uncovered** |
+| DFS excluded | DFS 5 GHz channels are held out of steering — dwelling on a radar-restricted channel produced "blind" stalls |
+| Cold-start steer | Discovery can steer at cold start; the dead autotune gate that blocked early steering was dropped, and `supported_channels` is sent even when autotune is empty |
+| Ground truth | Per-channel ground truth (autotune) is reconstructed from AP channel + live scan when the device doesn't report it directly |
+
+### App — UI / captures
+| Area | Detail |
+|------|--------|
+| Dual-band recon spectrum | The recon spectrum in the UI shows both bands; duplicate "recon" labels renamed; AI-event log spam trimmed; duplicate-node / image-flip on reconnect fixed |
+| Band-tagged captures | Captures are tagged with their **2.4 / 5 GHz band** |
 
 ---
 

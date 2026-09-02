@@ -499,6 +499,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             ?.toMap()
                             ?: emptyMap()
                     },
+                    // The device's real supported-channel universe (reg-domain aware), so the
+                    // bandit discovers 5 GHz on dual-band adapters. Empty until reported →
+                    // scheduler falls back to the 2.4 GHz floor.
+                    supportedChannels = {
+                        _deviceStates.value.values
+                            .firstOrNull { !it.supportedChannels.isNullOrEmpty() }
+                            ?.supportedChannels
+                            ?.toSet()
+                            ?: emptySet()
+                    },
                     // Only steer while actively hunting — no steering (or logs) in manual.
                     isAutoMode = { _isAutoMode.value },
                     // Channel of the AP seen-often-but-never-caught, so steering can chase it.

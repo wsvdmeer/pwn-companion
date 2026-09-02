@@ -28,6 +28,11 @@ class SyncScheduler(
     // pwnagotchi itself and doesn't depend on the app having logged events while
     // connected. Keyed by channel number. Empty when no autotune data has arrived.
     private val autotuneStats: () -> Map<Int, com.wsvdmeer.pwncompanion.models.AutotuneChannelStat> = { emptyMap() },
+    // The channels the device's monitor interface actually supports (reg-domain aware,
+    // reported by the plugin). This is the authoritative candidate universe for steering,
+    // so a dual-band adapter's 5 GHz channels are discoverable instead of a hardcoded 2.4
+    // list. Empty when unknown (older plugin / before first report) → 2.4 GHz floor fallback.
+    private val supportedChannels: () -> Set<Int> = { emptySet() },
     // Whether the device is actively hunting (AUTO). In MANUAL the device isn't
     // scanning, so steering its recon is pointless — we skip it entirely (no command,
     // no log spam) until the user goes back to AUTO.
@@ -67,6 +72,10 @@ class SyncScheduler(
     // tunnel-vision. The algorithm lives in [ChannelBandit] (pure + unit-tested); this holds
     // one instance so its pull memory persists across cycles.
     private val bandit = ChannelBandit()
+
+    // Round-robin cursor for the reserved exploration slot — walks the full supported
+    // spectrum so 5 GHz keeps getting revisited even when 2.4 dominates the exploit score.
+    private var exploreIdx = 0
 
     // ── Personality tuner (re-implements jayofelony's removed RL param-tuner) ──
     // Context policy: ap_ttl/sta_ttl/hop set from motion. Feedback hill-climb: min_rssi
@@ -154,17 +163,29 @@ class SyncScheduler(
                 return
             }
 
-            // ── Device ground truth: autotune per-channel stats ───────────────────
-            // The pwnagotchi's own per-channel tally: handshakes landed AND live client
-            // density (sta). Clients are the deauth targets, so a channel busy with
-            // clients right now is a fresh opportunity, not just where old handshakes fell.
+            // ── Device signals (best-effort, NOT preconditions) ───────────────────
+            // autotune = the plugin's per-channel handshake/client tally. On modern
+            // pwnagotchi (>= 2.9.5.5, "strategy" core) epoch_data carries no channel, so
+            // this stays empty — treat it as a bonus when present, never a gate.
             val auto = autotuneStats()
             val hasAuto = auto.values.any { it.handshakes > 0 || it.sta > 0 }
 
             val stats = memoryService.getLearningStats()
             val haveLearning = stats.totalObservations >= minObservationsToSteer
-            if (!haveLearning && !hasAuto) {
-                Log.d(tag, "Only ${stats.totalObservations} observations and no autotune data — not steering yet")
+
+            // Candidate universe: the channels the DEVICE actually supports (authoritative,
+            // reg-domain aware) so dual-band adapters' 5 GHz channels are discoverable — not
+            // a hardcoded 2.4 GHz list. Fall back to the 2.4 floor until the device reports.
+            val supported = supportedChannels().filter { it in 1..165 }.toSet()
+            val discoveryBase = supported.ifEmpty { (1..11).toSet() }
+
+            // Cold start: with no learned yield AND no autotune (the norm on new pwnagotchi,
+            // where autotune never populates), don't sit idle — fall through to a pure-
+            // exploration steer across the supported channels so recon covers both bands from
+            // cycle one and the learning DB starts filling. Only bail if there's genuinely
+            // nothing to explore.
+            if (!haveLearning && !hasAuto && discoveryBase.isEmpty()) {
+                Log.d(tag, "no learning, no autotune, no channel list — not steering yet")
                 return
             }
 
@@ -203,16 +224,48 @@ class SyncScheduler(
                 return s
             }
 
-            // Candidates: everything we know about PLUS the 2.4GHz floor (1–11) so the
-            // bandit can explore channels we've seen no activity on yet (discovery).
+            // Candidates: the supported-channel discovery base plus everything we know about
+            // (learned yield / here / now / untapped), intersected with what the device can do.
+            // EXCLUDE DFS 5 GHz channels (UNII-2): the dongle can't actively operate there without
+            // radar clearance, so steering onto them stalls recon ("blind") — and they're useless
+            // for pwning (no deauth/injection). Leaves non-DFS 5 GHz (36-48, 149-165) usable.
+            val dfs = setOf(52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144)
             val candidates = buildSet {
-                addAll(1..11); addAll(auto.keys); addAll(yieldByCh.keys); addAll(hourly); addAll(nearby); untap?.let { add(it) }
-            }.filter { it in 1..165 }
+                addAll(discoveryBase); addAll(auto.keys); addAll(yieldByCh.keys); addAll(hourly); addAll(nearby); untap?.let { add(it) }
+            }.filter { it in 1..165 && it !in dfs && (supported.isEmpty() || it in supported) }
 
-            // UCB1 (pure, in ChannelBandit): normalised exploit + an exploration bonus that's
-            // large for under-sampled channels and shrinks as we sample them; decaying pulls
-            // make it re-explore over time.
-            val topChannels = bandit.select(candidates, 3) { exploit(it) }
+            // Two EXPLOIT slots via UCB1 (goes where the clients/handshakes are — usually 2.4,
+            // since that's where real per-channel yield lives now that ground truth is restored).
+            val exploitTop = bandit.select(candidates, 2) { exploit(it) }
+
+            // One RESERVED EXPLORE slot, rotating through the band the exploit slots are NOT
+            // covering. Clients (hence exploit) live on 2.4, so this keeps the 3rd slot on 5 GHz
+            // — hunting 5 GHz EVERY cycle instead of only after walking all of 2.4 first. Breaks
+            // the chicken-and-egg (can't earn 5 GHz yield without ever hunting 5 GHz); a yielding
+            // 5 GHz channel still also wins exploit slots. Falls back to the whole spectrum if the
+            // device is single-band.
+            val sortedCand = candidates.sorted()
+            val band24 = sortedCand.filter { it <= 14 }
+            val band5 = sortedCand.filter { it > 14 }
+            val exploit5 = exploitTop.count { it > 14 }
+            val exploit24 = exploitTop.size - exploit5
+            val pool = when {
+                exploit24 >= exploit5 && band5.isNotEmpty() -> band5   // exploit leans 2.4 → explore 5 GHz
+                band24.isNotEmpty() -> band24                          // exploit leans 5 GHz → explore 2.4
+                else -> sortedCand
+            }
+            var exploreCh: Int? = null
+            if (pool.isNotEmpty()) {
+                for (i in pool.indices) {
+                    val c = pool[(exploreIdx + i) % pool.size]
+                    if (c !in exploitTop) {
+                        exploreCh = c
+                        exploreIdx = (exploreIdx + i + 1) % pool.size
+                        break
+                    }
+                }
+            }
+            val topChannels = (exploitTop + listOfNotNull(exploreCh)).distinct()
             if (topChannels.isEmpty()) return
 
             // Per-cycle trace so behaviour is observable live in AUTO (adb logcat -s SyncScheduler:D):
