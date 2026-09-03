@@ -6,7 +6,7 @@ All significant changes to PwnCompanion, most recent first.
 
 ## Session — 2026-09-02 (manual-mode discovery watchdog · power confirm sheet)
 
-App `1.2.13` (build 19) · plugin `2.2.0`
+App `1.2.6` (build 19) · plugin `2.2.0`
 
 ### Plugin — bootstrap discovery via a watchdog
 | Area | Detail |
@@ -22,7 +22,7 @@ App `1.2.13` (build 19) · plugin `2.2.0`
 
 ## Session — 5 GHz channel steering (dual-band adapters)
 
-App `1.2.12` (build 18) · plugin `2.1.0`
+App `1.2.5` (build 18) · plugin `2.1.0`
 
 Merged via PR #1. The hunt advisor was 2.4 GHz-only; on a dual-band adapter that left the entire 5 GHz spectrum unhunted.
 
