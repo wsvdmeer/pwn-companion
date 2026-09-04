@@ -434,7 +434,7 @@ SO_BINDTODEVICE = 25  # Linux-specific socket option
 
 class PwnCompanion(Plugin):
     __author__ = "wsvdmeer"
-    __version__ = "2.2.0"
+    __version__ = "2.4.0"
     __description__ = "Device-side bridge to the PwnCompanion app: screen mirror, GPS, telemetry, captures, commands, and AI voice."
 
     csrf_exempt = True
@@ -444,6 +444,18 @@ class PwnCompanion(Plugin):
     # (so the epoch-based fallback is dead) - without it, missing the one-shot
     # bt-tether connect event leaves the plugin idle forever.
     DISCOVERY_WATCHDOG_INTERVAL = 30
+
+    # A capture taken without a GPS fix is remembered this long; a fix arriving within
+    # the window backfills its coordinates. Bounded so a moving pet never gets a wildly
+    # stale location pinned onto an old grab.
+    GEO_BACKFILL_WINDOW_S = 30
+
+    # "clean partials" only deletes a partial grab that hasn't been written to for this
+    # long. On the new pwnagotchi bettercap keeps *appending* frames to a .pcapng, so a
+    # partial can still grow into a full handshake; this guard keeps the tool from
+    # deleting an in-progress capture out from under it. Old .pcap grabs (never appended)
+    # have long-stale mtimes, so they clean immediately.
+    PARTIAL_SETTLE_S = 300
 
     def __init__(self):
         # UI config
@@ -478,6 +490,10 @@ class PwnCompanion(Plugin):
         # Background discovery watchdog (works without epochs / in manual mode)
         self._watchdog_stop = threading.Event()
         self._watchdog_thread = None
+
+        # Captures grabbed with no GPS fix yet, awaiting a fix to backfill their coords
+        # (list of {"base", "ts", "channel"}). Guarded by self.lock.
+        self._pending_geo = []
 
         # Data storage
         self.last_gps = None
@@ -895,38 +911,36 @@ class PwnCompanion(Plugin):
                     self.loop
                 )
 
-            # Do we have a real GPS fix right now? (Used to decide whether to write the
-            # .gps.json sidecar and whether to attach coords to the live push.)
+            # Do we have a real GPS fix right now? (Used to decide whether to attach
+            # coords to the sidecar + the live push.)
             has_gps = False
             lat = lon = 0
-            if self.last_gps:
-                lat = self.last_gps.get("latitude", 0)
-                lon = self.last_gps.get("longitude", 0)
+            fix = self.last_gps
+            if fix:
+                lat = fix.get("latitude", 0)
+                lon = fix.get("longitude", 0)
                 has_gps = not (lat == 0 and lon == 0)
 
-            # Save GPS data alongside the pcap — only when there's a valid fix.
-            if has_gps:
-                # Only rewrite the extension, not every ".pcap" substring in the path
-                # (a dir/SSID containing ".pcap" would otherwise get a misnamed sidecar
-                # that _scan_capture_history — which strips only the suffix — can't pair).
-                gps_filename = capture_base(filename) + ".gps.json"
-                gps_data = {
-                    "latitude": self.last_gps.get("latitude"),
-                    "longitude": self.last_gps.get("longitude"),
-                    "accuracy": self.last_gps.get("accuracy"),
-                    "altitude": self.last_gps.get("altitude"),
-                    "timestamp": self.last_gps.get("timestamp"),
-                    "channel": ap_channel,   # so a rescan can still show 2.4/5 GHz band
-                }
-                try:
-                    with open(gps_filename, "w") as fp:
-                        json.dump(gps_data, fp, indent=2)
-                    log.info(
-                        f"[pwn-companion] ✓ GPS saved to {gps_filename} "
-                        f"(lat: {lat:.{GPS_COORD_PRECISION}f}, lon: {lon:.{GPS_COORD_PRECISION}f})"
+            # Persist the .gps.json sidecar so a later rescan can restore BOTH this
+            # capture's band (2.4/5 GHz, derived from the channel) and its location.
+            # The channel is known from bettercap regardless of GPS, so the sidecar is
+            # written whenever we have a channel OR a fix — no longer gated on GPS.
+            # Without this, a capture grabbed with no fix (e.g. while the app was
+            # disconnected and the pet hunted on its own) lost its band forever, not
+            # just its location — band and geo were wrongly coupled.
+            if ap_channel or has_gps:
+                self._write_gps_sidecar(filename, ap_channel, fix if has_gps else None)
+
+            # No fix at grab time? Remember it so a fix arriving within the window can
+            # backfill its coordinates. Pruned to the window here so an offline pet
+            # can't grow this list unbounded.
+            if not has_gps:
+                with self.lock:
+                    self._pending_geo.append(
+                        {"base": capture_base(filename), "ts": time.time(), "channel": ap_channel}
                     )
-                except OSError as e:
-                    log.warning(f"[pwn-companion] couldn't write GPS sidecar: {e}")
+                    cutoff = time.time() - self.GEO_BACKFILL_WINDOW_S
+                    self._pending_geo = [p for p in self._pending_geo if p["ts"] >= cutoff]
 
             # Push this single capture to the app so its list grows live — with map coords
             # when we have a fix, without them otherwise. Runs regardless of GPS so a capture
@@ -960,6 +974,71 @@ class PwnCompanion(Plugin):
                 )
         except Exception as e:
             log.error(f"[pwn-companion] Error in on_handshake: {e}")
+
+    def _write_gps_sidecar(self, filename, channel, fix):
+        """Write/overwrite the <base>.gps.json sidecar for a capture.
+
+        `fix` is a last_gps-style dict (lat/lon/accuracy/altitude/timestamp) or None.
+        `channel` is persisted whenever known — even with no fix — so the app can tag
+        the 2.4/5 GHz band regardless of location. _scan_capture_history reads channel
+        and coords independently, so a channel-only sidecar still restores the band on
+        rescan. Only rewrites the extension (not every ".pcap" substring) so a dir/SSID
+        containing ".pcap" can't misname the sidecar."""
+        gps_filename = capture_base(filename) + ".gps.json"
+        data = {}
+        if fix:
+            data.update({
+                "latitude": fix.get("latitude"),
+                "longitude": fix.get("longitude"),
+                "accuracy": fix.get("accuracy"),
+                "altitude": fix.get("altitude"),
+                "timestamp": fix.get("timestamp"),
+            })
+        if channel:
+            data["channel"] = channel
+        if not data:
+            return  # nothing worth persisting (no channel, no fix)
+        try:
+            with open(gps_filename, "w") as fp:
+                json.dump(data, fp, indent=2)
+            if fix:
+                log.info(
+                    f"[pwn-companion] ✓ GPS saved to {gps_filename} "
+                    f"(lat: {fix.get('latitude'):.{GPS_COORD_PRECISION}f}, "
+                    f"lon: {fix.get('longitude'):.{GPS_COORD_PRECISION}f})"
+                )
+            else:
+                log.debug(
+                    f"[pwn-companion] band-only sidecar {gps_filename} "
+                    f"(ch{channel}, no fix yet)"
+                )
+        except OSError as e:
+            log.warning(f"[pwn-companion] couldn't write GPS sidecar: {e}")
+
+    def _backfill_pending_geo(self, fix):
+        """A GPS fix just arrived — attach it to any capture grabbed within the last
+        GEO_BACKFILL_WINDOW_S seconds that had no fix at grab time, then forget the
+        rest. Recovers the common 'fix landed a few seconds after the grab' case
+        without pinning a far-later location onto an old capture. Called off the GPS
+        handler (asyncio thread); on_handshake fills the list from the main loop
+        thread, so the swap is done under self.lock."""
+        if not fix:
+            return
+        with self.lock:
+            pending = self._pending_geo
+            self._pending_geo = []
+        now = fix.get("timestamp") or time.time()
+        for item in pending:
+            age = now - item["ts"]
+            if age > self.GEO_BACKFILL_WINDOW_S:
+                continue  # too old — drop (its channel-only sidecar was already written)
+            # item["base"] is already extension-stripped; give _write_gps_sidecar a
+            # dummy extension so capture_base() round-trips to the same base.
+            self._write_gps_sidecar(item["base"] + ".pcap", item["channel"], fix)
+            log.info(
+                f"[pwn-companion] backfilled GPS onto {os.path.basename(item['base'])} "
+                f"({age:.0f}s late)"
+            )
 
     def _classify_pcap(self, pcap_path, use_cache=True):
         """Handshake quality/crackability: 'pmkid' | 'eapol' | 'partial' | None.
@@ -1132,6 +1211,57 @@ class PwnCompanion(Plugin):
             log.info(f"[pwn-companion] 🗑️ deleted {removed} file(s) for bssid {target}")
         except Exception as e:
             log.error(f"[pwn-companion] delete_capture failed: {e}")
+        return removed
+
+    def _clean_partials(self):
+        """Delete 'partial' captures — grabs hcxpcapngtool can't distil a WPA*01/WPA*02 hash from,
+        so they can never be cracked — plus their sidecars. Irreversible; triggered by the app's
+        'clean partials' action.
+
+        Two safety rails so this only removes genuine dead weight:
+          * A capture still being written to (mtime within PARTIAL_SETTLE_S) is skipped — on the new
+            pwnagotchi bettercap appends frames to a .pcapng, so a fresh partial may yet grow into a
+            full handshake.
+          * Classification comes from _classify_pcap, which is authoritative (re-runs the tool);
+            only an exact 'partial' verdict deletes. 'eapol'/'pmkid' are kept, and an *unknown*
+            result (None — e.g. hcxpcapngtool missing) is kept too, so we never delete a capture we
+            couldn't actually prove is worthless.
+
+        Returns the number of files removed.
+        """
+        removed = 0
+        kept_fresh = 0
+        try:
+            directory = self.handshakes_dir
+            if not directory or not os.path.isdir(directory):
+                log.info(f"[pwn-companion] clean_partials: no handshakes dir at {directory}")
+                return 0
+            now = time.time()
+            sidecar_exts = (".gps.json", ".22000", ".22000.tmp", ".q")
+            for name in os.listdir(directory):
+                if not is_capture_file(name):   # only the pcap/pcapng grabs; sidecars follow theirs
+                    continue
+                path = os.path.join(directory, name)
+                try:
+                    if now - os.path.getmtime(path) < self.PARTIAL_SETTLE_S:
+                        kept_fresh += 1
+                        continue   # still being appended — might yet become crackable
+                except OSError:
+                    continue
+                if self._classify_pcap(path) != "partial":
+                    continue   # crackable, or unknown → keep
+                base = capture_base(path)
+                for f in [path] + [base + e for e in sidecar_exts]:
+                    try:
+                        if os.path.isfile(f):
+                            os.remove(f)
+                            removed += 1
+                    except OSError as e:
+                        log.debug(f"[pwn-companion] clean_partials: couldn't remove {os.path.basename(f)}: {e}")
+            skipped = f" ({kept_fresh} still-fresh kept)" if kept_fresh else ""
+            log.info(f"[pwn-companion] 🧹 cleaned partials: removed {removed} file(s){skipped}")
+        except Exception as e:
+            log.error(f"[pwn-companion] clean_partials failed: {e}")
         return removed
 
     def _scan_capture_history(self, limit=300):
@@ -2161,9 +2291,9 @@ class PwnCompanion(Plugin):
         except Exception as e:
             log.error(f"[pwn-companion] Error dispatching command '{action}': {e}")
 
-        # After a wipe, push the now-empty history so the app's count matches disk immediately
+        # After a wipe/clean, push the refreshed history so the app's count matches disk immediately
         # (don't wait for the next periodic scan).
-        if action == "clear_captures":
+        if action in ("clear_captures", "clean_partials"):
             try:
                 loop = asyncio.get_event_loop()
                 captures = await loop.run_in_executor(None, self._scan_capture_history)
@@ -2217,6 +2347,9 @@ class PwnCompanion(Plugin):
             elif action == "delete_capture":
                 # Delete one capture's handshake files, matched by BSSID (in params "value").
                 self._delete_capture(params.get("value"))
+            elif action == "clean_partials":
+                # Delete only the uncrackable 'partial' grabs (settled ones); keep crackable captures.
+                self._clean_partials()
             elif action == "reboot":
                 log.info("[pwn-companion] 🔁 reboot requested by app")
                 subprocess.Popen(["sudo", "reboot"])            # fire-and-forget; system goes down
@@ -2360,6 +2493,13 @@ class PwnCompanion(Plugin):
                     "altitude": altitude,
                     "timestamp": time.time(),
                 }
+                fix_snapshot = self.last_gps
+
+            # Backfill any captures grabbed moments ago before this fix arrived, so a
+            # handshake taken during a GPS warm-up / brief dropout still gets mapped.
+            # (Outside the lock above — _backfill_pending_geo takes self.lock itself,
+            # and threading.Lock is not reentrant.)
+            self._backfill_pending_geo(fix_snapshot)
 
             # Send confirmation
             response = {

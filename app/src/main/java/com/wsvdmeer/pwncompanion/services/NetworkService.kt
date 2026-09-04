@@ -770,6 +770,14 @@ class NetworkService(private val context: Context) {
         }
     }
 
+    /** Drop every uncrackable partial capture from every device state (the app's "clean partials"
+     *  action; the linked Pi deletes the matching files and resends its trimmed history). */
+    fun removePartials() {
+        _deviceStates.update { states ->
+            states.mapValues { (_, s) -> s.copy(captures = s.captures.filterNot { it.isPartial }) }
+        }
+    }
+
     /**
      * Get message handler for UI subscription to incoming messages.
      */

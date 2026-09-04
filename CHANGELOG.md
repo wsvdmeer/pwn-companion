@@ -4,6 +4,33 @@ All significant changes to PwnCompanion, most recent first.
 
 ---
 
+## Session — 2026-09-04 (clean partials)
+
+plugin `2.4.0`
+
+### Clean uncrackable partial captures
+| Area | Detail |
+|------|--------|
+| Why | A **partial** grab is one `hcxpcapngtool` can't distil a WPA\*01/WPA\*02 hash from — no `.22000`, so it can never be cracked. They just accumulate on the device. |
+| Plugin — `clean_partials` command | New `_clean_partials()` deletes settled partial captures + their sidecars. Two safety rails: it re-classifies each grab with `hcxpcapngtool` (authoritative) and deletes **only** an exact `partial` verdict — a crackable or *unknown* result is kept; and it skips any capture written to within `PARTIAL_SETTLE_S` (300 s), since bettercap appends frames to a `.pcapng` and a fresh partial may still grow into a full handshake. Bumped to `2.4.0`. |
+| App — manage sheet | The captures **manage** sheet gains a confirm-gated **clean partials** action (shown only when partials exist), stating how many it will remove. It drops partials from the phone cache immediately and the plugin resends its trimmed history so the count reconciles. Crackable captures and cracked passwords are untouched. |
+
+---
+
+## Session — 2026-09-04 (decouple capture band-tag from GPS · geo backfill)
+
+plugin `2.3.0` · no app change
+
+### Plugin — captures keep their band even without a fix
+| Area | Detail |
+|------|--------|
+| Band/geo decoupled | The `.gps.json` sidecar — the only thing that persists a capture's channel (which the app turns into the 2.4/5 GHz band) — was written **only when a GPS fix existed at grab time**. So a handshake caught with no fix (typically while the app was disconnected and the pet hunted on its own) lost its **band** forever, not just its location. Live data showed the coupling exactly: only the geolocated captures had a band tag (53/272). The sidecar is now written whenever a **channel or a fix** is known, via a shared `_write_gps_sidecar()`, so every future capture is band-tagged regardless of GPS |
+| Geo backfill | A fix arriving within `GEO_BACKFILL_WINDOW_S` (30 s) of a fix-less grab now backfills that capture's coordinates (`_backfill_pending_geo()`), recovering the common "GPS warm-up / brief dropout" case. Bounded window so a moving pet never gets a wildly stale location pinned onto an old grab; the pending list is pruned to the window so an offline pet can't grow it unbounded |
+
+> Note: only affects **new** captures — the ~219 existing sidecar-less grabs never recorded a channel, so they can't be retroactively band-tagged; captures made while disconnected still can't be geolocated (the phone is the only GPS source and must be tethered), but they now at least get a band.
+
+---
+
 ## Session — 2026-09-02 (manual-mode discovery watchdog · power confirm sheet)
 
 App `1.2.6` (build 19) · plugin `2.2.0`

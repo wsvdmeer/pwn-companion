@@ -84,6 +84,14 @@ object CaptureStore {
         m.values.sortedByDescending { it.timestamp ?: 0L }
     }
 
+    /** Drop every cached capture matching [predicate] (e.g. uncrackable partials) and persist. */
+    fun removeMatching(context: Context, predicate: (CaptureEntry) -> Boolean): List<CaptureEntry> = synchronized(lock) {
+        val m = ensure(context)
+        val victims = m.values.filter(predicate).map { it.key }
+        if (victims.isNotEmpty()) { victims.forEach { m.remove(it) }; persist(context, m) }
+        m.values.sortedByDescending { it.timestamp ?: 0L }
+    }
+
     private fun persist(context: Context, m: Map<String, CaptureEntry>) {
         runCatching { file(context).writeText(json.encodeToString<List<CaptureEntry>>(m.values.toList())) }
             .onFailure { Log.w(TAG, "persist failed: ${it.message}") }
