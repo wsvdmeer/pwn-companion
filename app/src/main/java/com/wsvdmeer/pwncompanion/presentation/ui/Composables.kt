@@ -1344,7 +1344,7 @@ private fun ConsoleCommandBar(
 
 /** Spec for [ConfirmSheet]: what a disruptive action shows before it fires. `accent` is resolved
  *  from the theme at the call site (a data class can't read MaterialTheme). */
-private data class ConfirmSpec(
+internal data class ConfirmSpec(
     val title: String,
     val body: String,
     val accent: Color,
@@ -1361,7 +1361,7 @@ private data class ConfirmSpec(
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ConfirmSheet(spec: ConfirmSpec, onDismiss: () -> Unit) {
+internal fun ConfirmSheet(spec: ConfirmSpec, onDismiss: () -> Unit) {
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     ModalBottomSheet(
         onDismissRequest = onDismiss,

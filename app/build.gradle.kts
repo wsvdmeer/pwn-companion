@@ -26,7 +26,7 @@ android {
         applicationId = "com.wsvdmeer.pwncompanion"
         minSdk = 29
         targetSdk = 36
-        versionCode = 21
+        versionCode = 22
         versionName = "1.2.7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
