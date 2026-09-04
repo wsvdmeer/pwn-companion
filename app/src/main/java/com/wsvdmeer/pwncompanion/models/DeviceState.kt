@@ -28,6 +28,10 @@ data class DeviceState(
     val supportedChannels: List<Int>? = null,
     /** Geolocated handshakes captured by the device (newest first). */
     val captures: List<CaptureEntry> = emptyList(),
+    /** True once the device has sent a full-history snapshot this session (not just single-entry
+     *  appends). Gates partial reconciliation so we never drop cached partials before we've seen
+     *  the device's authoritative capture list. */
+    val hasFullCaptureSnapshot: Boolean = false,
     /** Latest per-epoch telemetry (vitals, reward, mood counters). */
     val telemetry: DeviceTelemetry? = null,
     /** Whether the device's wpa-sec cracking plugin is on (null = unknown yet). */

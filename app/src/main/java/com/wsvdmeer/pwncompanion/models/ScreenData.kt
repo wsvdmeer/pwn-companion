@@ -143,6 +143,12 @@ data class ScreenData(
     @SerialName("total_files")
     val totalFiles: Int? = null,
 
+    // True on a full-history snapshot (connect seed / post-clean resend) vs a single-entry
+    // append. The app treats a full snapshot as authoritative and reconciles partials to it,
+    // so a partial the device deleted (e.g. via clean_partials) stops re-syncing back.
+    @SerialName("full")
+    val full: Boolean? = null,
+
     // ── cracked results (from wpa-sec, matched to captures by BSSID) ──────────
     @SerialName("results")
     val crackedResults: List<CrackedResult>? = null,

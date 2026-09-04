@@ -4,9 +4,16 @@ All significant changes to PwnCompanion, most recent first.
 
 ---
 
-## Session — 2026-09-04 (clean dark basemap · unified confirm sheet)
+## Session — 2026-09-04 (clean dark basemap · unified confirm sheet · partials resync)
 
-App `1.2.7` (build 20)
+App `1.2.7` (build 21) · plugin `2.5.0`
+
+### Partials — stop them re-syncing after a clean
+| Area | Detail |
+|------|--------|
+| Root cause | `clean_partials` deletes partials on the Pi, but two things brought them back: the settle guard skipped any partial written in the last **5 min** (so with the pet hunting, most were never removed on the Pi), and the app's capture merges are additive unions that re-added any partial still listed in a history snapshot |
+| Plugin — settle window | `PARTIAL_SETTLE_S` cut 300s → **60s**, so a clean actually removes settled partials from the Pi instead of leaving fresh ones to re-sync; only a partial written to within the last minute (genuinely still growing) is protected. Bumped to `2.5.0` |
+| App — authoritative snapshots | Full-history snapshots (connect seed, post-clean resend) are now tagged `full`; on a full snapshot the app **reconciles** partials to the device's list — a partial the Pi no longer has is dropped from the device state **and** the on-disk cache, so it stops coming back. Crackable captures stay union-merged (offline persistence intact) |
 
 ### Map — clean dark basemap (drop the phosphor pixel shader)
 | Area | Detail |

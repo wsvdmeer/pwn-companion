@@ -434,7 +434,7 @@ SO_BINDTODEVICE = 25  # Linux-specific socket option
 
 class PwnCompanion(Plugin):
     __author__ = "wsvdmeer"
-    __version__ = "2.4.0"
+    __version__ = "2.5.0"
     __description__ = "Device-side bridge to the PwnCompanion app: screen mirror, GPS, telemetry, captures, commands, and AI voice."
 
     csrf_exempt = True
@@ -454,8 +454,10 @@ class PwnCompanion(Plugin):
     # long. On the new pwnagotchi bettercap keeps *appending* frames to a .pcapng, so a
     # partial can still grow into a full handshake; this guard keeps the tool from
     # deleting an in-progress capture out from under it. Old .pcap grabs (never appended)
-    # have long-stale mtimes, so they clean immediately.
-    PARTIAL_SETTLE_S = 300
+    # have long-stale mtimes, so they clean immediately. Kept short (60s) so a clean
+    # actually removes settled partials instead of leaving fresh ones to re-sync — only a
+    # partial written to within the last minute (genuinely still growing) is protected.
+    PARTIAL_SETTLE_S = 60
 
     def __init__(self):
         # UI config
@@ -1889,7 +1891,7 @@ class PwnCompanion(Plugin):
                 )
                 if captures:
                     await self._send_to_app(
-                        {"type": "capture_history", "captures": captures,
+                        {"type": "capture_history", "captures": captures, "full": True,
                          "total_files": getattr(self, "_last_scan_file_count", len(captures))}
                     )
                     log.info(f"[pwn-companion] Sent {len(captures)} captures to app")
@@ -2298,7 +2300,7 @@ class PwnCompanion(Plugin):
                 loop = asyncio.get_event_loop()
                 captures = await loop.run_in_executor(None, self._scan_capture_history)
                 await self._send_to_app(
-                    {"type": "capture_history", "captures": captures,
+                    {"type": "capture_history", "captures": captures, "full": True,
                      "total_files": getattr(self, "_last_scan_file_count", 0)}
                 )
             except Exception as e:

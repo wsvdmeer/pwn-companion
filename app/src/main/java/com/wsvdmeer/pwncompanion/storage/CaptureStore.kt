@@ -70,6 +70,38 @@ object CaptureStore {
         m.values.sortedByDescending { it.timestamp ?: 0L }
     }
 
+    /**
+     * Like [merge], but also reconciles **partials** against an authoritative key set from a
+     * connected device's full snapshot: any cached partial whose key isn't in [authoritativePartialKeys]
+     * is dropped (it's gone from the Pi — e.g. cleaned — so it shouldn't linger or re-sync). Crackable
+     * captures are never dropped here, preserving offline persistence. Pass a null key set to skip
+     * reconciliation (i.e. behave exactly like [merge]) — used while disconnected or before the
+     * device's authoritative list has arrived.
+     */
+    fun mergeReconcilingPartials(
+        context: Context,
+        incoming: List<CaptureEntry>,
+        authoritativePartialKeys: Set<String>?,
+    ): List<CaptureEntry> = synchronized(lock) {
+        val m = ensure(context)
+        var changed = false
+        for (c in incoming) {
+            val k = c.key
+            if (m[k] != c) { m[k] = c; changed = true }
+        }
+        if (authoritativePartialKeys != null) {
+            val zombies = m.values.filter { it.isPartial && it.key !in authoritativePartialKeys }.map { it.key }
+            if (zombies.isNotEmpty()) { zombies.forEach { m.remove(it) }; changed = true }
+        }
+        if (m.size > MAX) {
+            val keep = m.values.sortedByDescending { it.timestamp ?: 0L }.take(MAX)
+            m.clear(); keep.forEach { m[it.key] = it }
+            changed = true
+        }
+        if (changed) persist(context, m)
+        m.values.sortedByDescending { it.timestamp ?: 0L }
+    }
+
     /** Wipe the local capture cache (does not touch the Pi or cracked passwords). */
     fun clear(context: Context) = synchronized(lock) {
         cache = LinkedHashMap()
