@@ -57,9 +57,11 @@ android {
 
     buildTypes {
         release {
-            // Minify off for now: R8 without tested keep-rules can break kotlinx-serialization /
-            // Compose. Release-signed + unminified is a safe first release; R8 is a later pass.
-            isMinifyEnabled = false
+            // R8 on: keep-rules for the reflection/JNI surfaces (native cracker, kotlinx-
+            // serialization, ktor, WorkManager/Room) live in proguard-rules.pro and are verified
+            // on-device (launches clean). Shrinks the APK from ~49 MB to ~5 MB.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
