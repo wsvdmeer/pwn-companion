@@ -761,11 +761,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // merged set (newest first). Persisting here is what lets captures — and their 22000
                 // hashes — survive a restart and stay crackable with the Pi disconnected.
                 val liveCaptures = states.values.flatMap { it.captures }
+                // Only reconcile partials against the device when we have its authoritative list:
+                // every connected device has sent a full snapshot. Then a partial the Pi no longer
+                // has (cleaned) is dropped from the cache instead of lingering / re-syncing. While
+                // disconnected (or before the snapshot lands) we pass null → plain additive merge,
+                // preserving offline persistence.
+                val connected = states.values.filter { it.isConnected }
+                val authoritativePartialKeys: Set<String>? =
+                    if (connected.isNotEmpty() && connected.all { it.hasFullCaptureSnapshot })
+                        liveCaptures.filter { it.isPartial }.mapTo(HashSet()) { it.key }
+                    else null
                 // Merge + persist off the main thread — this collector runs on Main and fires on
                 // every device frame (the e-ink image rides along), so a synchronous file write here
                 // would jank the UI.
                 val allCaptures = withContext(Dispatchers.IO) {
-                    CaptureStore.merge(getApplication(), liveCaptures)
+                    CaptureStore.mergeReconcilingPartials(getApplication(), liveCaptures, authoritativePartialKeys)
                 }
                 if (allCaptures.size > _captures.value.size) {
                     appendLog("[*] captures :: ${allCaptures.size} logged")

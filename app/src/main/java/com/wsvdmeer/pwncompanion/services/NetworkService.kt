@@ -624,10 +624,21 @@ class NetworkService(private val context: Context) {
                     // Merge capture history: the plugin sends the full log on connect and
                     // single-entry appends on each new handshake. Dedupe by key (BSSID),
                     // newest first, keeping the richer (incoming) record on collision.
+                    // On a FULL snapshot the device's list is authoritative for partials: drop any
+                    // cached partial the snapshot no longer lists (it was deleted on the Pi, e.g.
+                    // via clean_partials) so it stops re-syncing back. Crackable captures are still
+                    // union-merged — that's what keeps them around while the Pi is disconnected.
                     captures = applyCracked(
-                        mergeCaptures(currentState.captures, data.captures),
+                        mergeCaptures(
+                            if (data.full == true) {
+                                val keys = data.captures?.mapTo(HashSet()) { it.key } ?: emptySet<String>()
+                                currentState.captures.filterNot { it.isPartial && it.key !in keys }
+                            } else currentState.captures,
+                            data.captures,
+                        ),
                         if (data.type == ScreenData.TYPE_CRACKED) data.crackedResults else null,
                     ),
+                    hasFullCaptureSnapshot = currentState.hasFullCaptureSnapshot || data.full == true,
                     // Merge telemetry field-by-field so the lightweight vitals push
                     // (temp/cpu/mem only, sent every ~12s regardless of mode) doesn't
                     // wipe the richer per-epoch reward/density values between epochs.
