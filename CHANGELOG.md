@@ -4,6 +4,23 @@ All significant changes to PwnCompanion, most recent first.
 
 ---
 
+## Session — 2026-09-04 (clean dark basemap · unified confirm sheet)
+
+App — next build
+
+### Map — clean dark basemap (drop the phosphor pixel shader)
+| Area | Detail |
+|------|--------|
+| Fix the "shape on every tile" | The map fetched CARTO `dark_nolabels` **without an API key**, which CARTO now returns stamped with a diagonal "API KEY REQUIRED" watermark. The phosphor pixel-shader amplified that watermark into a pale ghost shape repeating on every tile. Switched `TileMapLoader` to Esri **Dark Gray Canvas** (keyless; note z/y/x order + JPEG) and bumped the tile-cache prefix so the old watermarked tiles aren't served |
+| Drop the pixel shader | Removed the `RuntimeShader` phosphor post-effect from `SlippyPixelMap` — a plain dark basemap reads far clearer than the pixelated version. Catch/you markers still draw on top (green / orange). (The API<33 `PixelBasemap` fallback still pixelates — lower priority) |
+
+### App — one confirm sheet for all disruptive actions
+| Area | Detail |
+|------|--------|
+| Unified `ConfirmSheet` | `go auto` / `go manual`, `reboot pi`, `shutdown pi`, and now `stop service` all route through a single reusable `ConfirmSheet`/`ConfirmSpec` instead of separate `ModeSwitchSheet` / `PowerActionSheet`. Consistent look + behaviour, action-specific confirm labels (`reboot` / `shutdown` / `stop`); `stop service` gained a confirm it previously lacked |
+
+---
+
 ## Session — 2026-09-04 (clean partials)
 
 plugin `2.4.0`

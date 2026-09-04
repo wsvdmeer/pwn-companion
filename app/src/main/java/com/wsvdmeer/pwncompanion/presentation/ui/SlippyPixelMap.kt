@@ -1,9 +1,6 @@
 package com.wsvdmeer.pwncompanion.presentation.ui
 
 import android.graphics.Bitmap
-import android.graphics.RenderEffect
-import android.graphics.RuntimeShader
-import android.os.Build
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -29,7 +26,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
-import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
@@ -65,35 +61,6 @@ private fun latToNy(lat: Double): Double {
     val r = Math.toRadians(lat)
     return (1.0 - ln(tan(r) + 1.0 / cos(r)) / PI) / 2.0
 }
-
-/** Phosphor-pixel post effect on the TILE layer only: snap to a fixed screen-space cell, then map
- *  luminance (Carto dark tiles: dark land / lighter streets) to a dark→grey ramp with a faint green
- *  tint. Constant cell size = pixels stay the same on screen at every zoom, so detail flows through
- *  them like a real map. Markers are drawn ABOVE this, so they keep their green / orange colours. */
-private const val PIXEL_SHADER = """
-uniform shader content;
-uniform float cellA;
-uniform float cellB;
-uniform float2 phaseA;
-uniform float2 phaseB;
-uniform float blend;
-half3 phos(half4 s) {
-    float l = s.r * 0.299 + s.g * 0.587 + s.b * 0.114;
-    // land ~0.02 → near-black; streets low-mid → grey with a faint phosphor-green tint.
-    float t = smoothstep(0.045, 0.28, l);
-    return mix(half3(0.02, 0.03, 0.03), half3(0.42, 0.52, 0.44), t);
-}
-half4 main(float2 coord) {
-    // Two map-anchored pixel grids: coarse (cellA, cellPx→2·cellPx across the level) and fine
-    // (cellB = cellA/2). Crossfade by `blend` = frac(zoom) so the pixel size transitions smoothly
-    // across a tile-level boundary instead of popping (fine grid at blend=1 == coarse at next level).
-    float2 ca = (floor((coord - phaseA) / cellA) + 0.5) * cellA + phaseA;
-    float2 cb = (floor((coord - phaseB) / cellB) + 0.5) * cellB + phaseB;
-    half3 a = phos(content.eval(ca));
-    half3 b = phos(content.eval(cb));
-    return half4(mix(a, b, blend), 1.0);
-}
-"""
 
 private class Marker(val nx: Double, val ny: Double, val cap: CaptureEntry)
 
@@ -191,33 +158,17 @@ internal fun SlippyPixelMap(
             // pixels move/scale WITH the map instead of the map crawling through a fixed screen grid.
             val pxPerN = 2.0.pow(zoom.toDouble()) * 256.0
             val iz = floor(zoom.toDouble()).toInt().coerceIn(3, 19)
-            // Two map-anchored grids for the crossfade: coarse A (cellPx→2·cellPx across the level) and
-            // fine B (A/2). blend = frac(zoom) fades A→B so the pixel size never pops at a level edge.
+            // Marker-cluster grid: cell size scales with zoom, phase tracks the map. Catches are
+            // binned into these cells (below) so they merge zoomed out and separate zoomed in.
             val cellA = (cellPx / (2.0.pow(iz.toDouble()) * 256.0) * pxPerN).toFloat().coerceAtLeast(1f)
-            val cellB = (cellA / 2f).coerceAtLeast(1f)
             val phaseAX = ((wPx / 2 - centerX * pxPerN).mod(cellA.toDouble())).toFloat()
             val phaseAY = ((hPx / 2 - centerY * pxPerN).mod(cellA.toDouble())).toFloat()
-            val phaseBX = ((wPx / 2 - centerX * pxPerN).mod(cellB.toDouble())).toFloat()
-            val phaseBY = ((hPx / 2 - centerY * pxPerN).mod(cellB.toDouble())).toFloat()
-            val blend = (zoom - iz).toFloat().coerceIn(0f, 1f)
-            val shader = remember {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) RuntimeShader(PIXEL_SHADER) else null
-            }
 
-            // Tile layer — the graphicsLayer (pixel shader) forces its own composited layer; the
-            // uniforms are refreshed each frame so the grid stays locked to the map.
+            // Tile layer — rendered clean, no phosphor pixel shader. A plain dark Esri basemap reads
+            // far clearer; the pixelation only amplified tile artefacts (e.g. the CARTO "API KEY
+            // REQUIRED" watermark) into ghost shapes. Just clip to the map box.
             Canvas(
-                Modifier.matchParentSize().graphicsLayer {
-                    clip = true
-                    if (shader != null) {
-                        shader.setFloatUniform("cellA", cellA)
-                        shader.setFloatUniform("cellB", cellB)
-                        shader.setFloatUniform("phaseA", phaseAX, phaseAY)
-                        shader.setFloatUniform("phaseB", phaseBX, phaseBY)
-                        shader.setFloatUniform("blend", blend)
-                        renderEffect = RenderEffect.createRuntimeShaderEffect(shader, "content").asComposeRenderEffect()
-                    }
-                }
+                Modifier.matchParentSize().graphicsLayer { clip = true }
             ) {
                 drawRect(Color(0xFF02060A))
                 if (!inited) return@Canvas
