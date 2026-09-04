@@ -180,17 +180,18 @@ object TileMapLoader {
         val n = 1 shl z
         if (x < 0 || y < 0 || x >= n || y >= n) return null
         val cacheDir = File(context.cacheDir, "tilecache").apply { mkdirs() }
-        // Prefix with the tile style so switching sources doesn't serve stale cached tiles.
-        val f = File(cacheDir, "cd_${z}_${x}_${y}.png")
+        // Prefix with the tile style so switching sources doesn't serve stale cached tiles —
+        // notably the old CARTO tiles, which now come back stamped "API KEY REQUIRED".
+        val f = File(cacheDir, "esri_dg_${z}_${x}_${y}.jpg")
         if (f.exists() && f.length() > 0) {
             BitmapFactory.decodeFile(f.absolutePath)?.let { return it }
         }
         return try {
-            // Carto "dark_nolabels": dark land, light roads, no text. Recolors to clean
-            // green streets on black — far higher contrast for the phosphor look than
-            // standard OSM tiles (which are light-on-light and average to green mush).
-            // Free for reasonable use with "© OpenStreetMap © CARTO" attribution.
-            val url = "https://a.basemaps.cartocdn.com/dark_nolabels/$z/$x/$y.png"
+            // Esri "Dark Gray Canvas" base: a clean dark basemap (dark land, grey roads, light
+            // labels) served keyless. CARTO's dark_nolabels now requires an API key and returns a
+            // watermarked tile without one. Note the z/y/x path order (y before x) and JPEG body.
+            // Attribution: "© Esri — Esri, HERE, Garmin, © OpenStreetMap contributors".
+            val url = "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/$z/$y/$x"
             val req = Request.Builder().url(url).header("User-Agent", USER_AGENT).build()
             http.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) {

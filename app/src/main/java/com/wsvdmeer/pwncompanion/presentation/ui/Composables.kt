@@ -1268,76 +1268,105 @@ private fun ConsoleCommandBar(
     onReboot: () -> Unit = {},
     onShutdown: () -> Unit = {},
 ) {
-    // Mode-switch confirmation: a stray tap on the toggle restarts the pwnagotchi into the
-    // other mode (a disruptive round-trip), so hold the request here and confirm via a dialog
-    // before firing. null = no pending switch; true = switch to AUTO; false = switch to MANUAL.
-    var pendingMode by remember { mutableStateOf<Boolean?>(null) }
-    pendingMode?.let { toAuto ->
-        ModeSwitchSheet(
-            toAuto = toAuto,
-            onConfirm = { pendingMode = null; if (toAuto) onAuto() else onManual() },
-            onDismiss = { pendingMode = null },
-        )
-    }
-    // Device power confirmation — same sheet-based confirm as the mode switch (reboot/shutdown
-    // are disruptive, and shutdown means a physical power-cycle to recover). null = nothing
-    // pending; true = shutdown; false = reboot.
-    var pendingPower by remember { mutableStateOf<Boolean?>(null) }
-    pendingPower?.let { isShutdown ->
-        PowerActionSheet(
-            shutdown = isShutdown,
-            onConfirm = { pendingPower = null; if (isShutdown) onShutdown() else onReboot() },
-            onDismiss = { pendingPower = null },
-        )
-    }
+    // Every disruptive control (mode switch, reboot/shutdown, stop service) arms the SAME
+    // confirmation sheet instead of firing on the first tap — a stray tap otherwise restarts
+    // or powers off the pwnagotchi, or cuts the service mid-session. null = nothing pending.
+    var pendingConfirm by remember { mutableStateOf<ConfirmSpec?>(null) }
+    pendingConfirm?.let { spec -> ConfirmSheet(spec = spec, onDismiss = { pendingConfirm = null }) }
+    // Resolve theme colours here so the click lambdas (which run outside composition) can build a
+    // ConfirmSpec without touching MaterialTheme.
+    val cPrimary = MaterialTheme.colorScheme.primary
+    val cTertiary = MaterialTheme.colorScheme.tertiary
+    val cError = MaterialTheme.colorScheme.error
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             // Mode toggle — only meaningful while a pwnagotchi is actually LINKED (not merely
             // while the server is listening), since it sends restart_auto/manual to the device.
-            // Tapping only arms the dialog; the switch itself fires on confirm.
+            // Tapping only arms the confirm sheet; the switch itself fires on confirm.
             if (deviceConnected) {
-                if (isAutoMode) CmdAction("go manual", MaterialTheme.colorScheme.tertiary, Modifier.weight(1f)) { pendingMode = false }
-                else CmdAction("go auto", MaterialTheme.colorScheme.primary, Modifier.weight(1f)) { pendingMode = true }
+                if (isAutoMode) CmdAction("go manual", cTertiary, Modifier.weight(1f)) {
+                    pendingConfirm = ConfirmSpec(
+                        "[ switch → MANUAL ]",
+                        "Restart the pwnagotchi into MANUAL — it pauses hunting (safe for config changes).",
+                        cTertiary, onConfirm = onManual,
+                    )
+                } else CmdAction("go auto", cPrimary, Modifier.weight(1f)) {
+                    pendingConfirm = ConfirmSpec(
+                        "[ switch → AUTO ]",
+                        "Restart the pwnagotchi into AUTO — it resumes autonomous hunting.",
+                        cPrimary, onConfirm = onAuto,
+                    )
+                }
             }
-            // Service toggle — three states so a "start" tap is never a silent no-op:
-            //   running               → stop service
+            // Service toggle — three states so a "start" tap is never a silent no-op. Only the
+            // running→stop case is destructive, so only that one arms the confirm sheet:
+            //   running               → stop service (confirm)
             //   armed but not bound    → waiting for the Bluetooth link (tap cancels/disarms)
             //   fully off              → start service
             when {
                 isServerRunning ->
-                    CmdAction("stop service", MaterialTheme.colorScheme.error, Modifier.weight(1f), onToggleService)
+                    CmdAction("stop service", cError, Modifier.weight(1f)) {
+                        pendingConfirm = ConfirmSpec(
+                            "[ stop service ]",
+                            "Stop the companion service — the phone stops serving the pwnagotchi. It keeps hunting on its own; screen mirror, GPS and cracking pause until you start it again.",
+                            cError, confirmLabel = "stop", onConfirm = onToggleService,
+                        )
+                    }
                 networkingArmed ->
-                    CmdAction("waiting for link — cancel", MaterialTheme.colorScheme.tertiary, Modifier.weight(1f), onToggleService)
+                    CmdAction("waiting for link — cancel", cTertiary, Modifier.weight(1f), onToggleService)
                 else ->
-                    CmdAction("start service", MaterialTheme.colorScheme.primary, Modifier.weight(1f), onToggleService)
+                    CmdAction("start service", cPrimary, Modifier.weight(1f), onToggleService)
             }
         }
-        // Device power — reboot / shutdown the Pi. Only while linked; tapping arms a confirm
+        // Device power — reboot / shutdown the Pi. Only while linked; tapping arms the confirm
         // sheet (a shutdown means the Pi won't come back without a physical power-cycle).
         if (deviceConnected) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                CmdAction("reboot pi", MaterialTheme.colorScheme.tertiary, Modifier.weight(1f)) { pendingPower = false }
-                CmdAction("shutdown pi", MaterialTheme.colorScheme.error, Modifier.weight(1f)) { pendingPower = true }
+                CmdAction("reboot pi", cTertiary, Modifier.weight(1f)) {
+                    pendingConfirm = ConfirmSpec(
+                        "[ reboot pi ]",
+                        "Restart the pwnagotchi. The link drops and re-establishes once it's back up.",
+                        cTertiary, confirmLabel = "reboot", onConfirm = onReboot,
+                    )
+                }
+                CmdAction("shutdown pi", cError, Modifier.weight(1f)) {
+                    pendingConfirm = ConfirmSpec(
+                        "[ shutdown pi ]",
+                        "Power the pwnagotchi off. It won't come back until you physically power-cycle it.",
+                        cError, confirmLabel = "shutdown", onConfirm = onShutdown,
+                    )
+                }
             }
         }
     }
 }
 
+/** Spec for [ConfirmSheet]: what a disruptive action shows before it fires. `accent` is resolved
+ *  from the theme at the call site (a data class can't read MaterialTheme). */
+private data class ConfirmSpec(
+    val title: String,
+    val body: String,
+    val accent: Color,
+    val confirmLabel: String = "confirm",
+    val onConfirm: () -> Unit,
+)
+
 /**
- * Confirmation for an AUTO/MANUAL switch. The toggle sits next to the service/power controls and
- * gets fat-fingered, and each switch restarts the pwnagotchi — so require an explicit confirm.
- * A terminal-styled bottom sheet, matching the app's other sheets (filters, crack options,
- * controls) rather than a stock Material dialog.
+ * One reusable terminal-styled confirmation bottom sheet for every disruptive control that needs
+ * an explicit yes — the AUTO/MANUAL switch, reboot/shutdown, stop service. They sit next to each
+ * other and get fat-fingered, and each restarts / powers off the pwnagotchi or cuts the service,
+ * so all of them route through this same sheet (matching the app's other sheets, not a stock
+ * Material dialog) for one consistent confirm.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ModeSwitchSheet(toAuto: Boolean, onConfirm: () -> Unit, onDismiss: () -> Unit) {
-    val accent = if (toAuto) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
+private fun ConfirmSheet(spec: ConfirmSpec, onDismiss: () -> Unit) {
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = Color(0xFF02060A),
-        contentColor = accent,
+        contentColor = spec.accent,
     ) {
         Column(
             modifier = Modifier
@@ -1346,57 +1375,11 @@ private fun ModeSwitchSheet(toAuto: Boolean, onConfirm: () -> Unit, onDismiss: (
                 .padding(bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                if (toAuto) "[ switch → AUTO ]" else "[ switch → MANUAL ]",
-                color = accent, fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = TerminalMono,
-            )
-            Text(
-                if (toAuto) "Restart the pwnagotchi into AUTO — it resumes autonomous hunting."
-                else "Restart the pwnagotchi into MANUAL — it pauses hunting (safe for config changes).",
-                color = dim, fontSize = 11.sp, lineHeight = 16.sp, fontFamily = TerminalMono,
-            )
+            Text(spec.title, color = spec.accent, fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = TerminalMono)
+            Text(spec.body, color = dim, fontSize = 11.sp, lineHeight = 16.sp, fontFamily = TerminalMono)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 CmdAction("cancel", dim, Modifier.weight(1f), onDismiss)
-                CmdAction("confirm", accent, Modifier.weight(1f), onConfirm)
-            }
-        }
-    }
-}
-
-/**
- * Confirmation for a device power action (reboot / shutdown). Mirrors [ModeSwitchSheet]: a
- * terminal-styled bottom sheet matching the app's other sheets rather than a stock dialog. A
- * shutdown is called out as unrecoverable without a physical power-cycle.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun PowerActionSheet(shutdown: Boolean, onConfirm: () -> Unit, onDismiss: () -> Unit) {
-    val accent = if (shutdown) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.tertiary
-    val dim = MaterialTheme.colorScheme.onSurfaceVariant
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = Color(0xFF02060A),
-        contentColor = accent,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(
-                if (shutdown) "[ shutdown pi ]" else "[ reboot pi ]",
-                color = accent, fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = TerminalMono,
-            )
-            Text(
-                if (shutdown) "Power the pwnagotchi off. It won't come back until you physically power-cycle it."
-                else "Restart the pwnagotchi. The link drops and re-establishes once it's back up.",
-                color = dim, fontSize = 11.sp, lineHeight = 16.sp, fontFamily = TerminalMono,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                CmdAction("cancel", dim, Modifier.weight(1f), onDismiss)
-                CmdAction("confirm", accent, Modifier.weight(1f), onConfirm)
+                CmdAction(spec.confirmLabel, spec.accent, Modifier.weight(1f)) { onDismiss(); spec.onConfirm() }
             }
         }
     }
