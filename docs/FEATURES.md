@@ -17,6 +17,8 @@ A handshake only *counts* once it's cracked, so each capture is graded on-device
 
 The `[ captures ]` screen tags each catch and shows a `cracked · crackable · partial` split. A **`[ filters ]`** button opens a bottom sheet with the view filters (geo / crackable / cracked) and the cracking-power controls, so the list stays uncluttered. There are two ways to actually crack — a free server, or the phone itself.
 
+A **manage** sheet handles housekeeping: clear the phone cache, wipe every handshake on the device, or — when there are any — **clean partials**, which deletes just the uncrackable partial grabs on the Pwnagotchi (keeping every crackable capture) so dead weight doesn't pile up. The device re-checks each grab with `hcxpcapngtool` before deleting and leaves alone any partial that's still being written to (on the newer pwnagotchi bettercap keeps appending frames, so a partial can still grow into a full handshake).
+
 ### wpa-sec (server-side)
 
 If **wpa-sec** is enabled, the plugin uploads crackable handshakes and downloads results hourly to `wpa-sec.cracked.potfile`; the app matches passwords to captures by BSSID, tags them **cracked** with the password inline, and the pet gloats in-character when a *new* one lands. A **cracking** status row shows whether wpa-sec is on **and whether the service is reachable** (the Pi health-checks it — wpa-sec goes down sometimes). Cracked/connect events also fire **notifications**.

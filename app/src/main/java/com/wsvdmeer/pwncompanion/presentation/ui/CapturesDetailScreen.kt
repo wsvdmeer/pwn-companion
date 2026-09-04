@@ -356,7 +356,9 @@ fun CapturesDetailScreen(
     if (showManage) {
         ManageCapturesSheet(
             count = captures.size,
+            partialCount = partial,
             onClearPhone = { viewModel.clearPhoneCaptures(); showManage = false },
+            onCleanPartials = { viewModel.cleanDevicePartials(); showManage = false },
             onWipeDevice = { viewModel.wipeDeviceCaptures(); showManage = false },
             onDismiss = { showManage = false },
         )
@@ -553,7 +555,9 @@ private fun SheetButton(label: String, color: Color, onClick: () -> Unit) {
 @Composable
 private fun ManageCapturesSheet(
     count: Int,
+    partialCount: Int,
     onClearPhone: () -> Unit,
+    onCleanPartials: () -> Unit,
     onWipeDevice: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -563,6 +567,7 @@ private fun ManageCapturesSheet(
     val warn = Color(0xFFFFA533)
     val danger = Color(0xFFFF5C5C)
     var confirmPhone by remember { mutableStateOf(false) }
+    var confirmPartials by remember { mutableStateOf(false) }
     var confirmWipe by remember { mutableStateOf(false) }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color(0xFF02060A), contentColor = primary) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 28.dp)) {
@@ -585,6 +590,23 @@ private fun ManageCapturesSheet(
                 if (confirmPhone) "[ confirm — clear phone ]" else "[ clear phone cache ]",
                 if (confirmPhone) warn else primary,
             ) { if (confirmPhone) onClearPhone() else confirmPhone = true }
+
+            // Clean partials — only shown when there are uncrackable partials to remove. Deletes
+            // just those on the device (keeping every crackable grab), so it's safe housekeeping.
+            if (partialCount > 0) {
+                Spacer(Modifier.height(18.dp))
+                Text("clean partials", color = onSurface, fontSize = 12.sp, fontFamily = TerminalMono)
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "Deletes the $partialCount uncrackable partial grab${if (partialCount == 1) "" else "s"} on the Pwnagotchi (no handshake to crack) and drops them here. Crackable captures are kept; a partial still being written to is left alone.",
+                    color = dim, fontSize = 10.sp, fontFamily = TerminalMono
+                )
+                Spacer(Modifier.height(6.dp))
+                SheetButton(
+                    if (confirmPartials) "[ confirm — clean $partialCount partial${if (partialCount == 1) "" else "s"} ]" else "[ clean partials ]",
+                    warn,
+                ) { if (confirmPartials) onCleanPartials() else confirmPartials = true }
+            }
 
             Spacer(Modifier.height(18.dp))
             Text("wipe device handshakes", color = onSurface, fontSize = 12.sp, fontFamily = TerminalMono)

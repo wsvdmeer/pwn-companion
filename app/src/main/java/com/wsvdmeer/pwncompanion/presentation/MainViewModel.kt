@@ -929,6 +929,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * Delete the uncrackable **partial** grabs on the Pwnagotchi (settled ones — irreversible) and
+     * drop them from the phone too. Crackable captures and cracked passwords are untouched. The
+     * plugin re-classifies on disk and skips any partial still being appended, then resends its
+     * trimmed history so the count reconciles.
+     */
+    fun cleanDevicePartials() {
+        CaptureStore.removeMatching(getApplication()) { it.isPartial }
+        networkService?.removePartials()
+        _captures.value = _captures.value.filterNot { it.isPartial }
+        sendPwnagotchiCommand("clean_partials")
+        appendLog("[>] clean partials → sent")
+    }
+
+    /**
      * Request an AUTO/MANUAL mode switch. Updates the displayed mode immediately
      * (optimistic) so the toggle visibly responds, and tells the Pwnagotchi to
      * switch. The device's own mode report (deviceModeUpdates) reconciles later.
