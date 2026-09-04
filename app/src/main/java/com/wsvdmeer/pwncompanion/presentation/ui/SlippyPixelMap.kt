@@ -55,6 +55,14 @@ import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.tan
 
+// Esri "Dark Gray Canvas" base only has tiles up to z16. Past that its MapServer answers with a
+// "Map data not available" PLACEHOLDER tile (HTTP 200, decodes fine) — which is what showed on
+// screen when zooming in. So cap the tiles we FETCH at the source max and let deeper view zoom
+// over-zoom (scale up) those tiles instead. MAX_VIEW_Z keeps over-zoom to ~4× so it reads as
+// crisp pixels, not mush.
+private const val MAX_SOURCE_Z = 16
+private const val MAX_VIEW_Z = 18f
+
 // ── Web-Mercator normalized coords (0..1), independent of zoom ────────────────
 private fun lonToNx(lon: Double) = (lon + 180.0) / 360.0
 private fun latToNy(lat: Double): Double {
@@ -65,12 +73,10 @@ private fun latToNy(lat: Double): Double {
 private class Marker(val nx: Double, val ny: Double, val cap: CaptureEntry)
 
 /**
- * Continuous slippy-map renderer with the phosphor-pixel look: a real tile pyramid drawn under a
- * live GPU pan/zoom transform, deeper tiles streaming in seamlessly as you zoom, and a screen-space
- * pixel shader on top. Smooth like gmaps/OSM; markers (catches / you) drawn crisp above the effect.
- *
- * Requires a runtime shader (API 33+) for the pixel effect — the caller falls back to the coarse
- * grid renderer on older devices.
+ * Continuous slippy-map renderer with a pixelated phosphor look: a real tile pyramid drawn under a
+ * live pan/zoom transform, deeper tiles streaming in as you zoom. The pixelation is done without a
+ * runtime shader — nearest-neighbour tile scaling plus a map-anchored pixel-grid overlay — so it
+ * renders identically on every API level. Catch / "you" markers snap to the same grid on top.
  */
 @Composable
 internal fun SlippyPixelMap(
@@ -129,7 +135,8 @@ internal fun SlippyPixelMap(
             LaunchedEffect(geo, wPx, hPx) {
                 snapshotFlow {
                     val z = zoom.toDouble()
-                    val iz = floor(z).toInt().coerceIn(3, 19)
+                    // Clamp the FETCHED level to the source max; deeper view zoom over-zooms these.
+                    val iz = floor(z).toInt().coerceIn(3, MAX_SOURCE_Z)
                     val pxPerN = 2.0.pow(z) * 256.0
                     val n = 1 shl iz
                     val nL = centerX - (wPx / 2) / pxPerN; val nR = centerX + (wPx / 2) / pxPerN
@@ -164,9 +171,10 @@ internal fun SlippyPixelMap(
             val phaseAX = ((wPx / 2 - centerX * pxPerN).mod(cellA.toDouble())).toFloat()
             val phaseAY = ((hPx / 2 - centerY * pxPerN).mod(cellA.toDouble())).toFloat()
 
-            // Tile layer — rendered clean, no phosphor pixel shader. A plain dark Esri basemap reads
-            // far clearer; the pixelation only amplified tile artefacts (e.g. the CARTO "API KEY
-            // REQUIRED" watermark) into ghost shapes. Just clip to the map box.
+            // Tile layer — a plain dark Esri basemap (no runtime shader; that only amplified tile
+            // artefacts into ghost shapes). The pixelated look is rebuilt cheaply and on every API
+            // level from two pieces: nearest-neighbour tile scaling (so over-zoomed tiles render as
+            // crisp chunky pixels, not blurred) and a map-anchored pixel-grid overlay below.
             Canvas(
                 Modifier.matchParentSize().graphicsLayer { clip = true }
             ) {
@@ -187,8 +195,18 @@ internal fun SlippyPixelMap(
                         srcSize = IntSize(bmp.width, bmp.height),
                         dstOffset = IntOffset(sx.roundToInt(), sy.roundToInt()),
                         dstSize = IntSize(d, d),
-                        filterQuality = FilterQuality.Low,
+                        filterQuality = FilterQuality.None,   // nearest-neighbour: crisp pixels when over-zoomed
                     )
+                }
+                // Map-anchored pixel-grid overlay: faint dark cell borders on the SAME grid the catch
+                // pixels snap to, so the basemap reads as the same mosaic as the markers. Scales/pans
+                // with the map (cellA + phaseA), restoring the pixelated feel without a shader.
+                if (cellA >= 3f) {
+                    val grid = Color(0x33020A06)
+                    var gx = phaseAX
+                    while (gx < wPx) { drawLine(grid, Offset(gx, 0f), Offset(gx, hPx), strokeWidth = 1f); gx += cellA }
+                    var gy = phaseAY
+                    while (gy < hPx) { drawLine(grid, Offset(0f, gy), Offset(wPx, gy), strokeWidth = 1f); gy += cellA }
                 }
             }
 
@@ -205,7 +223,7 @@ internal fun SlippyPixelMap(
                             // (each step consumes a 2× factor). Keeps zoom on exact levels → stable pixels.
                             pinchAccum *= gz
                             var nz = zoom
-                            while (pinchAccum >= 1.5f && nz < 19f) { nz += 1f; pinchAccum /= 2f }
+                            while (pinchAccum >= 1.5f && nz < MAX_VIEW_Z) { nz += 1f; pinchAccum /= 2f }
                             while (pinchAccum <= 0.6667f && nz > 3f) { nz -= 1f; pinchAccum *= 2f }
                             if (nz != zoom) {
                                 // Keep the point under the pinch focal point fixed across the level step.

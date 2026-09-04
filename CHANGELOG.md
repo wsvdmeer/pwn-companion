@@ -13,6 +13,8 @@ App — next build
 |------|--------|
 | Fix the "shape on every tile" | The map fetched CARTO `dark_nolabels` **without an API key**, which CARTO now returns stamped with a diagonal "API KEY REQUIRED" watermark. The phosphor pixel-shader amplified that watermark into a pale ghost shape repeating on every tile. Switched `TileMapLoader` to Esri **Dark Gray Canvas** (keyless; note z/y/x order + JPEG) and bumped the tile-cache prefix so the old watermarked tiles aren't served |
 | Drop the pixel shader | Removed the `RuntimeShader` phosphor post-effect from `SlippyPixelMap` — a plain dark basemap reads far clearer than the pixelated version. Catch/you markers still draw on top (green / orange). (The API<33 `PixelBasemap` fallback still pixelates — lower priority) |
+| Fix "Map data not available" on zoom-in | Esri Dark Gray Canvas only has tiles to **z16**; past that its MapServer returns a placeholder tile whose image literally reads "Map data not available" (HTTP 200, so it drew on screen). The FETCH level is now clamped to the source max and deeper view zoom **over-zooms** (scales up) those tiles instead; view zoom capped at 18 (~4× over-zoom) |
+| Pixelated look, no shader | Rebuilt the pixel aesthetic cheaply and on every API level: nearest-neighbour tile scaling (`FilterQuality.None`) so over-zoomed tiles are crisp chunky pixels, plus a **map-anchored pixel-grid overlay** on the same cells the catch pixels snap to |
 
 ### App — one confirm sheet for all disruptive actions
 | Area | Detail |
