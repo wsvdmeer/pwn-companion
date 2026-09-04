@@ -6,7 +6,7 @@ All significant changes to PwnCompanion, most recent first.
 
 ## Session — 2026-09-04 (clean dark basemap · unified confirm sheet)
 
-App — next build
+App `1.2.7` (build 20)
 
 ### Map — clean dark basemap (drop the phosphor pixel shader)
 | Area | Detail |
