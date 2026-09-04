@@ -6,7 +6,7 @@ All significant changes to PwnCompanion, most recent first.
 
 ## Session — 2026-09-04 (clean dark basemap · unified confirm sheet · partials resync)
 
-App `1.2.7` (build 21) · plugin `2.5.0`
+App `1.2.7` (build 22) · plugin `2.5.0`
 
 ### Partials — stop them re-syncing after a clean
 | Area | Detail |
@@ -27,6 +27,7 @@ App `1.2.7` (build 21) · plugin `2.5.0`
 | Area | Detail |
 |------|--------|
 | Unified `ConfirmSheet` | `go auto` / `go manual`, `reboot pi`, `shutdown pi`, and now `stop service` all route through a single reusable `ConfirmSheet`/`ConfirmSpec` instead of separate `ModeSwitchSheet` / `PowerActionSheet`. Consistent look + behaviour, action-specific confirm labels (`reboot` / `shutdown` / `stop`); `stop service` gained a confirm it previously lacked |
+| Manage-captures confirms | `clear phone cache` and `wipe device handshakes` now open the same `ConfirmSheet` (labels `clear` / `WIPE`) instead of an inline two-tap, so every destructive action confirms the same way. `clean partials` keeps its inline confirm (safe housekeeping) |
 
 ---
 

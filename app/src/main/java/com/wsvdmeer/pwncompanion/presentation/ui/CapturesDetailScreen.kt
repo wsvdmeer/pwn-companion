@@ -112,6 +112,9 @@ fun CapturesDetailScreen(
     var showFilters by remember { mutableStateOf(false) }
     var showOptions by remember { mutableStateOf(false) }
     var showManage by remember { mutableStateOf(false) }
+    // Destructive manage actions (clear phone cache / wipe device) route through the shared
+    // ConfirmSheet, same as reboot/shutdown — a single tap opens it, confirm fires the action.
+    var pendingConfirm by remember { mutableStateOf<ConfirmSpec?>(null) }
     var detailCapture by remember { mutableStateOf<CaptureEntry?>(null) }
     var clusterCaptures by remember { mutableStateOf<List<CaptureEntry>?>(null) }
 
@@ -357,11 +360,33 @@ fun CapturesDetailScreen(
         ManageCapturesSheet(
             count = captures.size,
             partialCount = partial,
-            onClearPhone = { viewModel.clearPhoneCaptures(); showManage = false },
+            onClearPhone = {
+                showManage = false
+                pendingConfirm = ConfirmSpec(
+                    title = "[ clear phone cache ]",
+                    body = "Drops the locally-stored captures. A connected Pi resends its history, so this mainly prunes stale offline grabs. Cracked passwords are kept.",
+                    accent = Color(0xFFFFA533),
+                    confirmLabel = "clear",
+                    onConfirm = { viewModel.clearPhoneCaptures() },
+                )
+            },
             onCleanPartials = { viewModel.cleanDevicePartials(); showManage = false },
-            onWipeDevice = { viewModel.wipeDeviceCaptures(); showManage = false },
+            onWipeDevice = {
+                showManage = false
+                pendingConfirm = ConfirmSpec(
+                    title = "[ wipe device handshakes ]",
+                    body = "Deletes the .pcap handshakes on the Pwnagotchi — irreversible — and clears the phone cache too. Cracked passwords are kept.",
+                    accent = Color(0xFFFF5C5C),
+                    confirmLabel = "WIPE",
+                    onConfirm = { viewModel.wipeDeviceCaptures() },
+                )
+            },
             onDismiss = { showManage = false },
         )
+    }
+
+    pendingConfirm?.let { spec ->
+        ConfirmSheet(spec = spec, onDismiss = { pendingConfirm = null })
     }
 
     clusterCaptures?.let { caps ->
@@ -549,8 +574,9 @@ private fun SheetButton(label: String, color: Color, onClick: () -> Unit) {
     )
 }
 
-/** Manage captures: clear the phone cache, or wipe the Pi's handshakes too. Each action takes two
- *  taps (the second confirms) since wiping the device is irreversible. */
+/** Manage captures: clear the phone cache, or wipe the Pi's handshakes too. The two destructive
+ *  actions (clear phone / wipe device) open the shared ConfirmSheet; clean-partials is safe
+ *  housekeeping and keeps its inline two-tap confirm. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ManageCapturesSheet(
@@ -566,9 +592,7 @@ private fun ManageCapturesSheet(
     val onSurface = MaterialTheme.colorScheme.onSurface
     val warn = Color(0xFFFFA533)
     val danger = Color(0xFFFF5C5C)
-    var confirmPhone by remember { mutableStateOf(false) }
     var confirmPartials by remember { mutableStateOf(false) }
-    var confirmWipe by remember { mutableStateOf(false) }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color(0xFF02060A), contentColor = primary) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 28.dp)) {
             Text("[ MANAGE CAPTURES ]", color = primary, fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = TerminalMono)
@@ -586,10 +610,7 @@ private fun ManageCapturesSheet(
                 color = dim, fontSize = 10.sp, fontFamily = TerminalMono
             )
             Spacer(Modifier.height(6.dp))
-            SheetButton(
-                if (confirmPhone) "[ confirm — clear phone ]" else "[ clear phone cache ]",
-                if (confirmPhone) warn else primary,
-            ) { if (confirmPhone) onClearPhone() else confirmPhone = true }
+            SheetButton("[ clear phone cache ]", primary, onClearPhone)
 
             // Clean partials — only shown when there are uncrackable partials to remove. Deletes
             // just those on the device (keeping every crackable grab), so it's safe housekeeping.
@@ -616,10 +637,7 @@ private fun ManageCapturesSheet(
                 color = dim, fontSize = 10.sp, fontFamily = TerminalMono
             )
             Spacer(Modifier.height(6.dp))
-            SheetButton(
-                if (confirmWipe) "[ confirm — WIPE device ]" else "[ wipe device handshakes ]",
-                danger,
-            ) { if (confirmWipe) onWipeDevice() else confirmWipe = true }
+            SheetButton("[ wipe device handshakes ]", danger, onWipeDevice)
 
             Spacer(Modifier.height(18.dp))
             SheetButton("[ close ]", dim, onDismiss)
