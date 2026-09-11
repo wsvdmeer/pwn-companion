@@ -6,9 +6,11 @@ All significant changes to PwnCompanion, most recent first.
 
 ## Session — 2026-09-11 (architecture: deepen shallow modules)
 
-Internal refactor — no version bump. Behaviour-preserving except the map fallback removal (below).
-Full unit-test suite green (2 new suites added); verified live on-device with a Pi linked (image/GPS
-stream, steering, vitals, captures screen all confirmed working).
+App `1.2.8` (build 23)
+
+Internal refactor. Behaviour-preserving except the map fallback removal (below). Full unit-test
+suite green (2 new suites added); verified live on-device with a Pi linked (image/GPS stream,
+steering, vitals, captures screen all confirmed working).
 
 ### Protocol — one device-event stream (delete the handler registry)
 | Area | Detail |
