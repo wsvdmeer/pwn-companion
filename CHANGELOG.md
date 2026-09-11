@@ -4,6 +4,55 @@ All significant changes to PwnCompanion, most recent first.
 
 ---
 
+## Session — 2026-09-11 (architecture: deepen shallow modules)
+
+App `1.2.8` (build 23)
+
+Internal refactor. Behaviour-preserving except the map fallback removal (below). Full unit-test
+suite green (2 new suites added); verified live on-device with a Pi linked (image/GPS stream,
+steering, vitals, captures screen all confirmed working).
+
+### Protocol — one device-event stream (delete the handler registry)
+| Area | Detail |
+|------|--------|
+| `DeviceMessageProcessor` deleted | It was a generic `registerHandler(type, …)` registry with exactly one caller registering a fixed set once at init (`unregisterHandler` was dead). `MessageHandler` now routes with a plain `when(message.type)` — a class + a `ConcurrentHashMap` + a stats side-table gone, nothing reappearing elsewhere |
+| Six flows → one | The six parallel `SharedFlow`s (`deviceImageUpdates`, `deviceGpsUpdates`, `networkEventUpdates`, `deviceMoodUpdates`, `deviceModeUpdates`, `deviceStatusUpdates`) + their DTOs collapsed into a single `events: SharedFlow<DeviceEvent>` and one sealed `DeviceEvent` hierarchy (`Image`/`Gps`/`Status`/`Mood`/`Mode`/`Network`) |
+
+### On-phone crack — one status snapshot instead of four raw flows
+| Area | Detail |
+|------|--------|
+| `CrackSnapshot` + `statusOf(bssid)` | `CrackEngine` now exposes `statuses: StateFlow<CrackSnapshot>` that folds state/queue/exhausted/attempted into the per-network status decision in **one** place (`CrackStatus` enum). The captures screen used to re-derive that cross-reference at three call sites (pinned banner, each row, detail sheet) — now one call each |
+| Detail sheet interface | `CaptureDetailSheet` lost its four boolean params (`isRunning`/`isQueued`/`isExhausted`/`isAttempted`) for one `CrackStatus` |
+
+### NetworkService — cohesive seam, stop handing out internals
+| Area | Detail |
+|------|--------|
+| `deviceEvents` + `broadcastLocation()` | `getMessageHandler()` / `getOutgoingMessageQueue()` replaced by `deviceEvents: SharedFlow<DeviceEvent>` (the inbound seam) and `broadcastLocation(location)` (fan a fix out to all devices + cache it). `GpsService` and `GpsWorker` had **copy-pasted** the device-loop broadcast; both now call the one op |
+| `MainActivity` | Now threads a single `NetworkService` into the ViewModel instead of pulling three objects out of it; `initializeServices` takes one param |
+
+### MainViewModel — one event collector, extracted scheduler wiring
+| Area | Detail |
+|------|--------|
+| One collector | The 145-line `subscribeToMessageUpdates` (six parallel collectors) became one `subscribeToDeviceEvents` `when`-dispatch to named handlers (`reconcileDeviceMode`, `handleNetworkEvent`) |
+| `startSyncScheduler()` | The 10-callback `SyncScheduler` wiring moved out of `initializeServices` into its own method |
+
+### AI mood — DeviceMoodBridge
+| Area | Detail |
+|------|--------|
+| Extracted from the UI | The "which device signals drive the pet's mood" rules (event-type normalization, idle-in-manual skip, capture-count guard, seconds→millis math) moved out of a dozen `MainContentArea` `LaunchedEffect` blocks into `DeviceMoodBridge`; the effects are now one-liners. The branching decision (`wifiEventFor`) is a pure function, unit-tested off-Compose |
+
+### Map — SlippyPixelMap on every API (delete the pixel/ascii fallback)
+| Area | Detail |
+|------|--------|
+| Fallback removed | The API-33 gate existed only because the old phosphor effect used a `RuntimeShader` (API 33+). That shader was removed last session and the pixel look rebuilt to work on every API level — so the gate was vestigial. Deleted `CaptureMap`'s SDK branch plus `PixelBasemap` / `buildMapGrid` / `MapGrid` / `AsciiHeatmap` (~400 lines) and 27 now-dead imports; `SlippyPixelMap` serves all APIs (minSdk 29) |
+
+### Tests
+| Area | Detail |
+|------|--------|
+| New | `CrackSnapshotTest` (per-network status priority) and `DeviceMoodBridgeTest` (event normalization + idle-skip) |
+
+---
+
 ## Session — 2026-09-04 (clean dark basemap · unified confirm sheet · partials resync)
 
 App `1.2.7` (build 22) · plugin `2.5.0`

@@ -12,7 +12,6 @@ import android.util.Log
 import android.content.pm.ServiceInfo
 import androidx.core.app.ServiceCompat
 import androidx.core.content.PermissionChecker
-import com.wsvdmeer.pwncompanion.models.ScreenData
 import com.wsvdmeer.pwncompanion.utils.NotificationHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -270,53 +269,20 @@ class GpsService : Service() {
             // No separate GPS notification anymore — the single shared notification (owned by
             // NetworkService, id 1000) carries status; GPS coords don't need their own notice.
 
-            // Broadcast location to all connected WebSocket clients via the outgoing message queue
+            // Fan the fix out to every connected device + cache it — one cohesive op on the
+            // orchestrator (the queue + device-map loop lives there, not here). No-op if nothing's
+            // connected, so battery isn't spent broadcasting into the void.
             scope.launch {
-                try {
-                    if (networkService != null) {
-                        val outgoingQueue = networkService?.getOutgoingMessageQueue()
-                        val deviceStates = networkService?.getDeviceStates()
-                        
-                        // Only send if there are connected devices (avoid wasting resources)
-                        if (deviceStates != null && deviceStates.isNotEmpty()) {
-                            for ((deviceId, _) in deviceStates) {
-                                try {
-                                    outgoingQueue?.queueLocationResponse(
-                                        deviceId = deviceId,
-                                        latitude = location.latitude,
-                                        longitude = location.longitude,
-                                        accuracy = location.accuracy,
-                                        altitude = location.altitude
-                                    )
-                                    Log.d(tag, "✓ Location queued for device: $deviceId (lat=${location.latitude}, lon=${location.longitude})")
-                                } catch (e: Exception) {
-                                    Log.e(tag, "Error queueing location for device $deviceId: ${e.message}")
-                                }
-                            }
-
-                            // Cache this GPS fix in NetworkService so it can be returned immediately
-                            // to gps_request messages and to newly connecting devices.
-                            val gpsSnapshot = ScreenData(
-                                type = ScreenData.TYPE_GPS,
-                                latitude = location.latitude,
-                                longitude = location.longitude,
-                                accuracy = location.accuracy.toDouble(),
-                                altitude = location.altitude,
-                                // Hardware speed (m/s) when the chipset reports it — the
-                                // reliable motion signal (Doppler); null → app differences positions.
-                                speed = if (location.hasSpeed()) location.speed else null,
-                                timestamp = System.currentTimeMillis()
-                            )
-                            networkService?.updateLastGpsData(gpsSnapshot)
-                        } else {
-                            Log.d(tag, "No connected devices, skipping location broadcast")
-                        }
-                    } else {
-                        Log.w(tag, "NetworkService not initialized, cannot broadcast location")
-                    }
-                } catch (e: Exception) {
-                    Log.e(tag, "Error broadcasting location: ${e.message}", e)
+                val ns = networkService
+                if (ns == null) {
+                    Log.w(tag, "NetworkService not initialized, cannot broadcast location")
+                    return@launch
                 }
+                val sent = runCatching { ns.broadcastLocation(location) }
+                    .onFailure { Log.e(tag, "Error broadcasting location: ${it.message}", it) }
+                    .getOrDefault(0)
+                if (sent == 0) Log.d(tag, "No connected devices, skipping location broadcast")
+                else Log.d(tag, "✓ Location queued for $sent device(s) (lat=${location.latitude}, lon=${location.longitude})")
             }
         } catch (e: Exception) {
             Log.e(tag, "Error handling location update: ${e.message}", e)

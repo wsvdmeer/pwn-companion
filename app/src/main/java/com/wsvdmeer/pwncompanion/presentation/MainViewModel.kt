@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.wsvdmeer.pwncompanion.BuildConfig
 import com.wsvdmeer.pwncompanion.database.PwnCompanionDatabase
 import com.wsvdmeer.pwncompanion.crack.CrackEngine
+import com.wsvdmeer.pwncompanion.crack.CrackSnapshot
 import com.wsvdmeer.pwncompanion.crack.CrackState
 import com.wsvdmeer.pwncompanion.models.CaptureEntry
 import com.wsvdmeer.pwncompanion.models.DeviceState
@@ -19,7 +20,7 @@ import com.wsvdmeer.pwncompanion.models.Strategy
 import com.wsvdmeer.pwncompanion.storage.CaptureStore
 import com.wsvdmeer.pwncompanion.utils.NotificationHelper
 import com.wsvdmeer.pwncompanion.utils.UpdateChecker
-import com.wsvdmeer.pwncompanion.protocol.MessageHandler
+import com.wsvdmeer.pwncompanion.protocol.DeviceEvent
 import com.wsvdmeer.pwncompanion.protocol.OutgoingMessageQueue
 import com.wsvdmeer.pwncompanion.services.CompanionBackgroundService
 import com.wsvdmeer.pwncompanion.services.NetworkService
@@ -53,7 +54,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Service instances (injected from MainActivity)
     private var networkService: NetworkService? = null
-    private var messageHandler: MessageHandler? = null
+    // The device's outbound command channel, read off the orchestrator (networkService.outgoing).
     private var outgoingQueue: OutgoingMessageQueue? = null
     private var wifiMemoryService: WifiMemoryService? = null
     private var strategyEngine: StrategyDecisionEngine? = null
@@ -167,8 +168,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // Last WiFi event from the Pwnagotchi — consumed by the AI personality card
-    private val _lastNetworkEvent = MutableStateFlow<com.wsvdmeer.pwncompanion.protocol.MessageHandler.NetworkEventUpdate?>(null)
-    val lastNetworkEvent: StateFlow<com.wsvdmeer.pwncompanion.protocol.MessageHandler.NetworkEventUpdate?> = _lastNetworkEvent.asStateFlow()
+    private val _lastNetworkEvent = MutableStateFlow<DeviceEvent.Network?>(null)
+    val lastNetworkEvent: StateFlow<DeviceEvent.Network?> = _lastNetworkEvent.asStateFlow()
 
     // Raw pwnagotchi mood name (e.g. "HAPPY", "BORED") — used to auto-sync the AI personality mood
     private val _deviceMood = MutableStateFlow<String?>(null)
@@ -217,10 +218,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // and resumes after a kill. The ViewModel just forwards intent + re-exposes the engine flows.
     val crackState: StateFlow<CrackState> = CrackEngine.state
     val crackQueue: StateFlow<List<CaptureEntry>> = CrackEngine.queue
-    // Networks fully searched on-phone with no hit — shown as a lasting "no match" status.
-    val crackExhausted: StateFlow<Set<String>> = CrackEngine.exhausted
-    // Networks started but not finished (stopped/interrupted, no hit yet) — shown as "tried".
-    val crackAttempted: StateFlow<Set<String>> = CrackEngine.attempted
+    // Per-network crack status (queued/running/exhausted/attempted), folded into one snapshot by the
+    // engine so the captures screen asks `statusOf(bssid)` instead of cross-referencing raw flows.
+    val crackSnapshot: StateFlow<CrackSnapshot> = CrackEngine.statuses
 
     init {
         // Restore persisted crack outcomes so cracked passwords + "no match" tags survive restart.
@@ -440,16 +440,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Called from MainActivity after services are available.
      * MUST be called before using any service-dependent features.
      */
-    fun initializeServices(
-        networkService: NetworkService,
-        messageHandler: MessageHandler,
-        outgoingQueue: OutgoingMessageQueue
-    ) {
+    fun initializeServices(networkService: NetworkService) {
         // Always refresh the service references (a rotation can hand us fresh singletons),
         // but only wire up collectors / scheduler once per ViewModel lifetime.
         this.networkService = networkService
-        this.messageHandler = messageHandler
-        this.outgoingQueue = outgoingQueue
+        this.outgoingQueue = networkService.outgoing
 
         if (servicesInitialized) {
             Log.d(tag, "Services already initialized — refreshed references only (skipping re-subscribe)")
@@ -461,7 +456,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         try {
             val repo = PwnCompanionDatabase.getRepository(getApplication())
             this.observationRepository = repo
-            
+
             wifiMemoryService = WifiMemoryService(repo)
             strategyEngine = StrategyDecisionEngine(wifiMemoryService!!)
             Log.d(tag, "Database and strategy engine initialized successfully")
@@ -471,215 +466,192 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         // Subscribe to updates
-        subscribeToMessageUpdates()
+        subscribeToDeviceEvents(networkService)
         subscribeToDeviceStates()
         subscribeToQueueState()
         loadLearningStats()
-
-        // Initialize sync scheduler if services are available
-        if (wifiMemoryService != null && strategyEngine != null) {
-            try {
-                syncScheduler = SyncScheduler(
-                    outgoingQueue, wifiMemoryService!!, strategyEngine!!,
-                    connectedDeviceIds = { _deviceStates.value.keys },
-                    onSteer = { chans ->
-                        _channelPriority.value = chans
-                        appendLog("[*] steering recon -> ch ${chans.joinToString(",")}")
-                    },
-                    currentLocation = {
-                        _gpsData.value?.takeIf { it.isValid() }?.let { it.latitude to it.longitude }
-                    },
-                    // Device ground-truth per-channel capture stats. Parse the string-keyed
-                    // autotune map from any connected device into channel-int keys.
-                    autotuneStats = {
-                        _deviceStates.value.values
-                            .firstOrNull { !it.autotuneChannels.isNullOrEmpty() }
-                            ?.autotuneChannels
-                            ?.mapNotNull { (k, v) -> k.toIntOrNull()?.let { it to v } }
-                            ?.toMap()
-                            ?: emptyMap()
-                    },
-                    // The device's real supported-channel universe (reg-domain aware), so the
-                    // bandit discovers 5 GHz on dual-band adapters. Empty until reported →
-                    // scheduler falls back to the 2.4 GHz floor.
-                    supportedChannels = {
-                        _deviceStates.value.values
-                            .firstOrNull { !it.supportedChannels.isNullOrEmpty() }
-                            ?.supportedChannels
-                            ?.toSet()
-                            ?: emptySet()
-                    },
-                    // Only steer while actively hunting — no steering (or logs) in manual.
-                    isAutoMode = { _isAutoMode.value },
-                    // Channel of the AP seen-often-but-never-caught, so steering can chase it.
-                    untappedChannel = { _untappedChannel.value },
-                    // Moving → hop the wide band instead of pinning a (now-stale) learned set.
-                    isMoving = { isMovingNow() },
-                    // Reward inputs for the personality tuner (re-implements the removed RL).
-                    totalCaptures = { _captures.value.size },
-                    deviceReward = { _telemetry.value?.reward?.toFloat() },
-                    onTune = { t ->
-                        val prev = _tuning.value
-                        _tuning.value = t
-                        if (prev != t) appendLog("[*] tuning :: rssi ${t.minRssi} · ttl ${t.apTtl}/${t.staTtl} · recon ${t.reconTime}s · hop ${t.hopRecon}s")
-                    },
-                )
-                syncScheduler?.startPeriodicSync("pwnagotchi_main", viewModelScope)
-            } catch (e: Exception) {
-                Log.e(tag, "Error initializing sync scheduler: ${e.message}")
-                // Continue - sync not critical
-            }
-        }
+        startSyncScheduler(networkService.outgoing)
 
         Log.i(tag, "ViewModel fully initialized with all services")
     }
 
+    /** Wire up the periodic sync/steering scheduler. All inputs are pulled live from ViewModel
+     *  state via the callbacks below; the scheduler owns the cadence + the UCB1 decision. */
+    private fun startSyncScheduler(outgoingQueue: OutgoingMessageQueue) {
+        val memory = wifiMemoryService ?: return
+        val engine = strategyEngine ?: return
+        try {
+            syncScheduler = SyncScheduler(
+                outgoingQueue, memory, engine,
+                connectedDeviceIds = { _deviceStates.value.keys },
+                onSteer = { chans ->
+                    _channelPriority.value = chans
+                    appendLog("[*] steering recon -> ch ${chans.joinToString(",")}")
+                },
+                currentLocation = {
+                    _gpsData.value?.takeIf { it.isValid() }?.let { it.latitude to it.longitude }
+                },
+                // Device ground-truth per-channel capture stats. Parse the string-keyed
+                // autotune map from any connected device into channel-int keys.
+                autotuneStats = {
+                    _deviceStates.value.values
+                        .firstOrNull { !it.autotuneChannels.isNullOrEmpty() }
+                        ?.autotuneChannels
+                        ?.mapNotNull { (k, v) -> k.toIntOrNull()?.let { it to v } }
+                        ?.toMap()
+                        ?: emptyMap()
+                },
+                // The device's real supported-channel universe (reg-domain aware), so the
+                // bandit discovers 5 GHz on dual-band adapters. Empty until reported →
+                // scheduler falls back to the 2.4 GHz floor.
+                supportedChannels = {
+                    _deviceStates.value.values
+                        .firstOrNull { !it.supportedChannels.isNullOrEmpty() }
+                        ?.supportedChannels
+                        ?.toSet()
+                        ?: emptySet()
+                },
+                // Only steer while actively hunting — no steering (or logs) in manual.
+                isAutoMode = { _isAutoMode.value },
+                // Channel of the AP seen-often-but-never-caught, so steering can chase it.
+                untappedChannel = { _untappedChannel.value },
+                // Moving → hop the wide band instead of pinning a (now-stale) learned set.
+                isMoving = { isMovingNow() },
+                // Reward inputs for the personality tuner (re-implements the removed RL).
+                totalCaptures = { _captures.value.size },
+                deviceReward = { _telemetry.value?.reward?.toFloat() },
+                onTune = { t ->
+                    val prev = _tuning.value
+                    _tuning.value = t
+                    if (prev != t) appendLog("[*] tuning :: rssi ${t.minRssi} · ttl ${t.apTtl}/${t.staTtl} · recon ${t.reconTime}s · hop ${t.hopRecon}s")
+                },
+            )
+            syncScheduler?.startPeriodicSync("pwnagotchi_main", viewModelScope)
+        } catch (e: Exception) {
+            Log.e(tag, "Error initializing sync scheduler: ${e.message}")
+            // Continue - sync not critical
+        }
+    }
+
     /**
-     * Subscribe to incoming message updates from MessageHandler.
-     * Updates UI state when images, GPS, or status messages arrive.
+     * Collect the single device-event stream and fold each event into UI state. Replaces the six
+     * parallel flow collectors this ViewModel used to run; the per-type work lives in the focused
+     * handlers below.
      */
-    private fun subscribeToMessageUpdates() {
-        val handler = messageHandler ?: return
-
-        // Subscribe to incoming image updates
+    private fun subscribeToDeviceEvents(networkService: NetworkService) {
         viewModelScope.launch {
-            handler.deviceImageUpdates.collect { imageUpdate ->
+            networkService.deviceEvents.collect { event ->
                 try {
-                    _currentImageData.value = imageUpdate.imageData
-                    _currentImageDeviceId.value = imageUpdate.deviceId
-                    _currentImageTimestamp.value = imageUpdate.timestamp
-                    Log.d(tag, "Image received: deviceId=${imageUpdate.deviceId}, size=${imageUpdate.imageData.length}")
-                } catch (e: Exception) {
-                    Log.e(tag, "Error processing image update: ${e.message}", e)
-                    _errorMessage.value = "Failed to process image: ${e.message}"
-                }
-            }
-        }
-
-        // Subscribe to incoming GPS updates
-        viewModelScope.launch {
-            handler.deviceGpsUpdates.collect { gpsUpdate ->
-                try {
-                    updateGpsData(
-                        gpsUpdate.latitude,
-                        gpsUpdate.longitude,
-                        gpsUpdate.accuracy,
-                        gpsUpdate.altitude
-                    )
-                    Log.d(tag, "GPS received: deviceId=${gpsUpdate.deviceId}, lat=${gpsUpdate.latitude}, lon=${gpsUpdate.longitude}")
-                } catch (e: Exception) {
-                    Log.e(tag, "Error processing GPS update: ${e.message}", e)
-                    _errorMessage.value = "Failed to process GPS: ${e.message}"
-                }
-            }
-        }
-
-        // Subscribe to network events (deauths, handshakes, discoveries) → feeds AI + learning
-        viewModelScope.launch {
-            handler.networkEventUpdates.collect { event ->
-                _lastNetworkEvent.value = event
-                Log.i(tag, "Network event for AI: ${event.eventType} — ${event.description}")
-
-                // Track discovered APs (for untapped-target spotting). Every association/
-                // discovery with a BSSID bumps its sighting count; a capture later removes
-                // it from the "never caught" set via recomputeUntapped().
-                if (event.eventType == "network_discovered" && !event.bssid.isNullOrBlank()) {
-                    val k = event.bssid!!.lowercase()
-                    val prevAp = discoveredAps[k]
-                    if (prevAp == null) noteNewApSeen()   // genuinely new BSSID → churn signal
-                    discoveredAps[k] = SeenAp(
-                        ssid = event.network ?: prevAp?.ssid ?: "",
-                        bssid = event.bssid!!,
-                        rssi = event.signal ?: prevAp?.rssi ?: -90,
-                        channel = event.channel ?: prevAp?.channel ?: 0,
-                        count = (prevAp?.count ?: 0) + 1,
-                    )
-                    recomputeUntapped()
-                }
-
-                // Feed the on-screen terminal log (themed, hacker-style lines)
-                val ch = event.channel?.let { " (ch$it)" } ?: ""
-                appendLog(when (event.eventType) {
-                    "handshakes_captured" -> "[+] handshake captured :: ${event.network ?: "?"}$ch"
-                    "network_discovered"  -> "[*] target acquired :: ${event.network ?: "?"}$ch"
-                    "anomaly_detected"    -> "[!] deauth/anomaly :: ${event.station ?: event.network ?: event.bssid ?: "spectrum"}$ch"
-                    else                  -> "[>] ${event.eventType} :: ${event.network ?: ""}"
-                })
-
-                // Record observation for learning — only in AUTO mode (no scanning in MANUAL)
-                val memService = wifiMemoryService ?: return@collect
-                if (!_isAutoMode.value) {
-                    Log.d(tag, "MANUAL mode — skipping learning observation for ${event.eventType}")
-                    return@collect
-                }
-                if (event.eventType == "handshakes_captured" || event.eventType == "network_discovered" || event.eventType == "anomaly_detected") {
-                    viewModelScope.launch {
-                        try {
-                            val gps = _gpsData.value
-                            val now = System.currentTimeMillis()
-                            val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-                            val obs = com.wsvdmeer.pwncompanion.database.WifiObservation(
-                                ssid               = event.network ?: "unknown",
-                                bssid              = event.bssid ?: "",
-                                channel            = event.channel ?: 0,
-                                security           = event.security ?: "WPA2",
-                                attacks_sent       = if (event.eventType == "anomaly_detected") 1 else 0,
-                                handshakes_captured = if (event.eventType == "handshakes_captured") event.count.coerceAtLeast(1) else 0,
-                                latitude           = gps?.latitude ?: 0.0,
-                                longitude          = gps?.longitude ?: 0.0,
-                                timestamp          = now,
-                                hourOfDay          = hour,
-                            )
-                            memService.recordObservation(obs)
-                            Log.d(tag, "Learning observation recorded: ${event.eventType} ch=${obs.channel} hs=${obs.handshakes_captured}")
-                            // Refresh learning stats after each new observation
-                            loadLearningStats()
-                        } catch (e: Exception) {
-                            Log.e(tag, "Failed to record learning observation: ${e.message}", e)
+                    when (event) {
+                        is DeviceEvent.Image -> {
+                            _currentImageData.value = event.imageData
+                            _currentImageDeviceId.value = event.deviceId
+                            _currentImageTimestamp.value = System.currentTimeMillis()
+                            Log.d(tag, "Image received: deviceId=${event.deviceId}, size=${event.imageData.length}")
                         }
+                        is DeviceEvent.Gps -> {
+                            updateGpsData(event.latitude, event.longitude, event.accuracy, event.altitude)
+                            Log.d(tag, "GPS received: deviceId=${event.deviceId}, lat=${event.latitude}, lon=${event.longitude}")
+                        }
+                        is DeviceEvent.Status -> {
+                            _currentStatusMessage.value = event.message
+                            Log.d(tag, "Status received: deviceId=${event.deviceId}, status=${event.status}")
+                        }
+                        is DeviceEvent.Mood -> {
+                            _deviceMood.value = event.moodName
+                            Log.i(tag, "Device mood synced: ${event.moodName}")
+                        }
+                        is DeviceEvent.Mode -> reconcileDeviceMode(event)
+                        is DeviceEvent.Network -> handleNetworkEvent(event)
                     }
-                }
-            }
-        }
-
-        // Subscribe to device mood updates — sync pwnagotchi mood → app mood
-        viewModelScope.launch {
-            handler.deviceMoodUpdates.collect { moodUpdate ->
-                _deviceMood.value = moodUpdate.moodName
-                Log.i(tag, "Device mood synced: ${moodUpdate.moodName}")
-            }
-        }
-
-        // Subscribe to device mode updates — AUTO vs MANUAL
-        viewModelScope.launch {
-            handler.deviceModeUpdates.collect { modeUpdate ->
-                when {
-                    !modeUserControlled -> {
-                        // Plugin now reports the REAL mode (read from pwnagotchi's View),
-                        // so trust it by default.
-                        _isAutoMode.value = modeUpdate.isAutoMode
-                        Log.i(tag, "Device mode synced: ${if (modeUpdate.isAutoMode) "AUTO" else "MANUAL"}")
-                    }
-                    modeUpdate.isAutoMode == _isAutoMode.value -> {
-                        // Device confirmed the mode the user just requested — stop
-                        // overriding and resume following the device.
-                        modeUserControlled = false
-                        Log.d(tag, "Device confirmed user-requested mode; resuming sync")
-                    }
-                    else -> Log.d(tag, "Ignoring stale mode report until device confirms user's choice")
-                }
-            }
-        }
-
-        // Subscribe to incoming status updates
-        viewModelScope.launch {
-            handler.deviceStatusUpdates.collect { statusUpdate ->
-                try {
-                    _currentStatusMessage.value = statusUpdate.message
-                    Log.d(tag, "Status received: deviceId=${statusUpdate.deviceId}, status=${statusUpdate.status}")
                 } catch (e: Exception) {
-                    Log.e(tag, "Error processing status update: ${e.message}", e)
-                    _errorMessage.value = "Failed to process status: ${e.message}"
+                    val kind = event::class.simpleName
+                    Log.e(tag, "Error processing $kind event: ${e.message}", e)
+                    _errorMessage.value = "Failed to process $kind: ${e.message}"
+                }
+            }
+        }
+    }
+
+    /** Reconcile the device's reported AUTO/MANUAL mode with a mode the user just forced locally. */
+    private fun reconcileDeviceMode(event: DeviceEvent.Mode) {
+        when {
+            !modeUserControlled -> {
+                // Plugin now reports the REAL mode (read from pwnagotchi's View), so trust it.
+                _isAutoMode.value = event.isAutoMode
+                Log.i(tag, "Device mode synced: ${if (event.isAutoMode) "AUTO" else "MANUAL"}")
+            }
+            event.isAutoMode == _isAutoMode.value -> {
+                // Device confirmed the mode the user just requested — stop overriding, resume sync.
+                modeUserControlled = false
+                Log.d(tag, "Device confirmed user-requested mode; resuming sync")
+            }
+            else -> Log.d(tag, "Ignoring stale mode report until device confirms user's choice")
+        }
+    }
+
+    /** A Wi-Fi event (handshake/discovery/anomaly): feed the AI + terminal log + untapped tracking,
+     *  and record a learning observation (AUTO mode only). */
+    private fun handleNetworkEvent(event: DeviceEvent.Network) {
+        _lastNetworkEvent.value = event
+        Log.i(tag, "Network event for AI: ${event.eventType} — ${event.description}")
+
+        // Track discovered APs (for untapped-target spotting). Every association/discovery with a
+        // BSSID bumps its sighting count; a capture later removes it from the "never caught" set.
+        val bssid = event.bssid
+        if (event.eventType == "network_discovered" && !bssid.isNullOrBlank()) {
+            val k = bssid.lowercase()
+            val prevAp = discoveredAps[k]
+            if (prevAp == null) noteNewApSeen()   // genuinely new BSSID → churn signal
+            discoveredAps[k] = SeenAp(
+                ssid = event.network ?: prevAp?.ssid ?: "",
+                bssid = bssid,
+                rssi = event.signal ?: prevAp?.rssi ?: -90,
+                channel = event.channel ?: prevAp?.channel ?: 0,
+                count = (prevAp?.count ?: 0) + 1,
+            )
+            recomputeUntapped()
+        }
+
+        // Feed the on-screen terminal log (themed, hacker-style lines)
+        val ch = event.channel?.let { " (ch$it)" } ?: ""
+        appendLog(when (event.eventType) {
+            "handshakes_captured" -> "[+] handshake captured :: ${event.network ?: "?"}$ch"
+            "network_discovered"  -> "[*] target acquired :: ${event.network ?: "?"}$ch"
+            "anomaly_detected"    -> "[!] deauth/anomaly :: ${event.station ?: event.network ?: event.bssid ?: "spectrum"}$ch"
+            else                  -> "[>] ${event.eventType} :: ${event.network ?: ""}"
+        })
+
+        // Record observation for learning — only in AUTO mode (no scanning in MANUAL)
+        val memService = wifiMemoryService ?: return
+        if (!_isAutoMode.value) {
+            Log.d(tag, "MANUAL mode — skipping learning observation for ${event.eventType}")
+            return
+        }
+        if (event.eventType == "handshakes_captured" || event.eventType == "network_discovered" || event.eventType == "anomaly_detected") {
+            viewModelScope.launch {
+                try {
+                    val gps = _gpsData.value
+                    val now = System.currentTimeMillis()
+                    val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+                    val obs = com.wsvdmeer.pwncompanion.database.WifiObservation(
+                        ssid               = event.network ?: "unknown",
+                        bssid              = event.bssid ?: "",
+                        channel            = event.channel ?: 0,
+                        security           = event.security ?: "WPA2",
+                        attacks_sent       = if (event.eventType == "anomaly_detected") 1 else 0,
+                        handshakes_captured = if (event.eventType == "handshakes_captured") event.count.coerceAtLeast(1) else 0,
+                        latitude           = gps?.latitude ?: 0.0,
+                        longitude          = gps?.longitude ?: 0.0,
+                        timestamp          = now,
+                        hourOfDay          = hour,
+                    )
+                    memService.recordObservation(obs)
+                    Log.d(tag, "Learning observation recorded: ${event.eventType} ch=${obs.channel} hs=${obs.handshakes_captured}")
+                    // Refresh learning stats after each new observation
+                    loadLearningStats()
+                } catch (e: Exception) {
+                    Log.e(tag, "Failed to record learning observation: ${e.message}", e)
                 }
             }
         }
