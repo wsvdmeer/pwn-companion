@@ -3,11 +3,13 @@ package com.wsvdmeer.pwncompanion.services
 import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.location.Location
 import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.core.content.PermissionChecker
 import com.wsvdmeer.pwncompanion.models.DeviceState
 import com.wsvdmeer.pwncompanion.models.ScreenData
+import com.wsvdmeer.pwncompanion.protocol.DeviceEvent
 import com.wsvdmeer.pwncompanion.protocol.MessageHandler
 import com.wsvdmeer.pwncompanion.protocol.OutgoingMessageQueue
 import com.wsvdmeer.pwncompanion.utils.NotificationHelper
@@ -17,6 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -446,7 +449,6 @@ class NetworkService(private val context: Context) {
         scope.launch {
             stop()
             bluetoothMonitor.unregister()
-            messageHandler.cleanup()
             outgoingMessageQueue.cleanup()
         }
     }
@@ -790,14 +792,52 @@ class NetworkService(private val context: Context) {
     }
 
     /**
-     * Get message handler for UI subscription to incoming messages.
+     * The one inbound seam: typed device events (images, status, moods, modes, network events)
+     * parsed from incoming wire messages. Callers collect this; [MessageHandler] stays private.
      */
-    fun getMessageHandler(): MessageHandler = messageHandler
+    val deviceEvents: SharedFlow<DeviceEvent> get() = messageHandler.events
 
     /**
-     * Get outgoing message queue for command queuing.
+     * The outbound command channel to connected devices. The ViewModel — the origin of
+     * user-driven commands (steer/tune/mode/reboot) — queues them here. Location fixes have their
+     * own cohesive path, [broadcastLocation], so GPS sources don't touch this directly.
      */
-    fun getOutgoingMessageQueue(): OutgoingMessageQueue = outgoingMessageQueue
+    val outgoing: OutgoingMessageQueue get() = outgoingMessageQueue
+
+    /**
+     * Push a fresh location fix to every connected device and cache it (so a gps_request or a
+     * newly-connecting device gets it immediately). The single home for the "fan the fix out to all
+     * devices" loop that GpsService and GpsWorker used to each re-implement by reaching for the
+     * outgoing queue + device map. No-op when nothing is connected. Returns the device count sent to.
+     */
+    fun broadcastLocation(location: Location): Int {
+        val devices = _deviceStates.value
+        if (devices.isEmpty()) return 0
+        for (deviceId in devices.keys) {
+            runCatching {
+                outgoingMessageQueue.queueLocationResponse(
+                    deviceId = deviceId,
+                    latitude = location.latitude,
+                    longitude = location.longitude,
+                    accuracy = location.accuracy,
+                    altitude = location.altitude,
+                )
+            }.onFailure { Log.e(tag, "Error queueing location for $deviceId: ${it.message}") }
+        }
+        updateLastGpsData(
+            ScreenData(
+                type = ScreenData.TYPE_GPS,
+                latitude = location.latitude,
+                longitude = location.longitude,
+                accuracy = location.accuracy.toDouble(),
+                altitude = location.altitude,
+                // Hardware speed (m/s) when the chipset reports it — the reliable motion signal.
+                speed = if (location.hasSpeed()) location.speed else null,
+                timestamp = System.currentTimeMillis(),
+            )
+        )
+        return devices.size
+    }
 
     /**
      * Check if server is running.
