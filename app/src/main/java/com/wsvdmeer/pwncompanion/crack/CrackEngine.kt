@@ -17,14 +17,52 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
+
+/**
+ * Where one network sits in the on-phone crack lifecycle, from the UI's point of view. Mutually
+ * exclusive by construction — see [CrackSnapshot.statusOf], the one place that decides it.
+ */
+enum class CrackStatus { NONE, QUEUED, RUNNING, PAUSED, EXHAUSTED, ATTEMPTED }
+
+/**
+ * A consistent, self-contained view of crack progress across every network, so callers ask one
+ * question — [statusOf] — instead of cross-referencing the raw state/queue/exhausted/attempted
+ * flows themselves. The interpretation lives here; the captures screen just renders the answer.
+ */
+data class CrackSnapshot(
+    val runningKey: String?,
+    val paused: Boolean,
+    val queuedKeys: Set<String>,
+    val exhaustedKeys: Set<String>,
+    val attemptedKeys: Set<String>,
+) {
+    /** The single per-network status decision, formerly re-derived at each call site. */
+    fun statusOf(bssid: String): CrackStatus {
+        val k = CrackQueue.norm(bssid)
+        return when {
+            runningKey == k -> if (paused) CrackStatus.PAUSED else CrackStatus.RUNNING
+            k in queuedKeys -> CrackStatus.QUEUED
+            k in exhaustedKeys -> CrackStatus.EXHAUSTED
+            k in attemptedKeys -> CrackStatus.ATTEMPTED
+            else -> CrackStatus.NONE
+        }
+    }
+
+    companion object {
+        val EMPTY = CrackSnapshot(null, false, emptySet(), emptySet(), emptySet())
+    }
+}
 
 /** On-phone crack progress, surfaced to the captures screen + the foreground notification. */
 sealed interface CrackState {
@@ -77,6 +115,27 @@ object CrackEngine {
     private val _attempted = MutableStateFlow<Set<String>>(emptySet())
     val attempted: StateFlow<Set<String>> = _attempted.asStateFlow()
     @Volatile private var resultsLoaded = false
+
+    /**
+     * The one derived view the captures screen collects: state + queue + exhausted + attempted,
+     * folded into per-network status. Collect this and call [CrackSnapshot.statusOf] instead of
+     * re-cross-referencing the four flows above.
+     */
+    val statuses: StateFlow<CrackSnapshot> =
+        combine(_state, _queue, _exhausted, _attempted) { state, queue, exhausted, attempted ->
+            val runningKey = when (state) {
+                is CrackState.Running -> norm(state.bssid)
+                is CrackState.Paused -> norm(state.bssid)
+                else -> null
+            }
+            CrackSnapshot(
+                runningKey = runningKey,
+                paused = state is CrackState.Paused,
+                queuedKeys = queue.mapTo(HashSet()) { norm(it.bssid) },
+                exhaustedKeys = exhausted,
+                attemptedKeys = attempted,
+            )
+        }.stateIn(scope, SharingStarted.Eagerly, CrackSnapshot.EMPTY)
 
     private var job: Job? = null
     private val skip = AtomicBoolean(false)

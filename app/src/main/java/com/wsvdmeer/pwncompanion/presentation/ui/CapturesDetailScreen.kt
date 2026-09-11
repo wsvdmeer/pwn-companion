@@ -16,23 +16,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -44,14 +34,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
@@ -66,29 +51,17 @@ import com.wsvdmeer.pwncompanion.crack.WpaCracker
 import com.wsvdmeer.pwncompanion.models.CaptureEntry
 import com.wsvdmeer.pwncompanion.models.GpsData
 import com.wsvdmeer.pwncompanion.BuildConfig
-import com.wsvdmeer.pwncompanion.crack.CrackEngine
 import com.wsvdmeer.pwncompanion.crack.CrackSettings
 import com.wsvdmeer.pwncompanion.crack.KeyGenerators
 import com.wsvdmeer.pwncompanion.crack.CrackState
+import com.wsvdmeer.pwncompanion.crack.CrackStatus
 import com.wsvdmeer.pwncompanion.presentation.MainViewModel
 import com.wsvdmeer.pwncompanion.presentation.theme.TerminalMono
-import com.wsvdmeer.pwncompanion.utils.GeoPoint
-import com.wsvdmeer.pwncompanion.utils.MapTiles
-import com.wsvdmeer.pwncompanion.utils.TileMapLoader
-import android.os.Build
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.withContext
-import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.floor
-import kotlin.math.hypot
-import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * Full-screen [ captures ] detail: an ASCII heatmap of where handshakes were caught,
+ * Full-screen [ captures ] detail: a pixel-basemap map of where handshakes were caught,
  * plus the complete, searchable capture log. Reached by tapping the captures summary.
  */
 @Composable
@@ -103,8 +76,8 @@ fun CapturesDetailScreen(
     val gps by viewModel.gpsData.collectAsState()
     val crackState by viewModel.crackState.collectAsState()
     val crackQueue by viewModel.crackQueue.collectAsState()
-    val crackExhausted by viewModel.crackExhausted.collectAsState()
-    val crackAttempted by viewModel.crackAttempted.collectAsState()
+    // One snapshot answers per-network crack status; no more cross-referencing raw flows here.
+    val crackSnapshot by viewModel.crackSnapshot.collectAsState()
     var query by remember { mutableStateOf("") }
     var geoOnly by remember { mutableStateOf(false) }
     var crackedOnly by remember { mutableStateOf(false) }
@@ -212,13 +185,6 @@ fun CapturesDetailScreen(
         // Everything below scrolls together — map, search/filters, counts, and the list — so the
         // big map scrolls away with the list instead of pinning the top of the screen.
         val activeFilters = (if (geoOnly) 1 else 0) + (if (crackableOnly) 1 else 0) + (if (crackedOnly) 1 else 0)
-        val currentKey = when (val s = crackState) {
-            is CrackState.Running -> CrackEngine.norm(s.bssid)
-            is CrackState.Paused -> CrackEngine.norm(s.bssid)
-            else -> null
-        }
-        val currentPaused = crackState is CrackState.Paused
-        val queuedKeys = remember(crackQueue) { crackQueue.map { CrackEngine.norm(it.bssid) }.toSet() }
 
         LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
             // ── pixel map of catch locations (scrolls with the list) ──
@@ -240,7 +206,7 @@ fun CapturesDetailScreen(
                         color = dim, fontSize = 11.sp, fontFamily = TerminalMono
                     )
                     Spacer(Modifier.height(4.dp))
-                    CaptureMap(
+                    SlippyPixelMap(
                         points = captures.filter { it.isGeolocated },
                         current = gps?.takeIf { it.isValid() },
                         onCatch = { caps ->
@@ -322,15 +288,11 @@ fun CapturesDetailScreen(
 
             // ── the capture rows ── tap any row to open its detail sheet.
             items(filtered, key = { it.key }) { c ->
-                val k = CrackEngine.norm(c.bssid)
-                val rowState = when {
-                    currentKey == k -> if (currentPaused) RowCrack.PAUSED else RowCrack.RUNNING
-                    k in queuedKeys -> RowCrack.QUEUED
-                    k in crackExhausted -> RowCrack.EXHAUSTED
-                    k in crackAttempted -> RowCrack.ATTEMPTED
-                    else -> RowCrack.NONE
-                }
-                CaptureDetailRow(c, primary, dim, onSurface, onClick = { detailCapture = c }, rowState = rowState)
+                CaptureDetailRow(
+                    c, primary, dim, onSurface,
+                    onClick = { detailCapture = c },
+                    rowState = crackSnapshot.statusOf(c.bssid),
+                )
             }
             item { Spacer(Modifier.height(24.dp)) }
         }
@@ -398,19 +360,10 @@ fun CapturesDetailScreen(
     }
 
     detailCapture?.let { cap ->
-        val k = CrackEngine.norm(cap.bssid)
-        val running = when (val s = crackState) {
-            is CrackState.Running -> CrackEngine.norm(s.bssid) == k
-            is CrackState.Paused -> CrackEngine.norm(s.bssid) == k
-            else -> false
-        }
         CaptureDetailSheet(
             capture = cap,
             onPhoneCrackable = WpaCracker.isOnPhoneCrackable(cap.hash22000),
-            isRunning = running,
-            isQueued = crackQueue.any { CrackEngine.norm(it.bssid) == k },
-            isExhausted = k in crackExhausted,
-            isAttempted = k in crackAttempted,
+            crackStatus = crackSnapshot.statusOf(cap.bssid),
             onCrack = { viewModel.enqueueCrack(cap); detailCapture = null },
             onDequeue = { viewModel.dequeueCrack(cap); detailCapture = null },
             onStop = { viewModel.cancelCrack() },   // keep sheet open so the status updates live
@@ -427,10 +380,7 @@ fun CapturesDetailScreen(
 private fun CaptureDetailSheet(
     capture: CaptureEntry,
     onPhoneCrackable: Boolean,
-    isRunning: Boolean,
-    isQueued: Boolean,
-    isExhausted: Boolean,
-    isAttempted: Boolean,
+    crackStatus: CrackStatus,
     onCrack: () -> Unit,
     onDequeue: () -> Unit,
     onStop: () -> Unit,
@@ -438,6 +388,11 @@ private fun CaptureDetailSheet(
     onDeleteDevice: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // "Running" folds in the power-paused state — both mean a crack is in flight for this network.
+    val isRunning = crackStatus == CrackStatus.RUNNING || crackStatus == CrackStatus.PAUSED
+    val isQueued = crackStatus == CrackStatus.QUEUED
+    val isExhausted = crackStatus == CrackStatus.EXHAUSTED
+    val isAttempted = crackStatus == CrackStatus.ATTEMPTED
     val primary = MaterialTheme.colorScheme.primary
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     val onSurface = MaterialTheme.colorScheme.onSurface
@@ -801,9 +756,6 @@ private fun CrackPowerSheet(
     }
 }
 
-/** Per-row crack status the list overlays onto a capture. */
-private enum class RowCrack { NONE, QUEUED, RUNNING, PAUSED, EXHAUSTED, ATTEMPTED }
-
 /** One capture row: geo marker, SSID, coords (if any), relative age. */
 @Composable
 private fun CaptureDetailRow(
@@ -812,7 +764,7 @@ private fun CaptureDetailRow(
     dim: Color,
     onSurface: Color,
     onClick: () -> Unit,
-    rowState: RowCrack = RowCrack.NONE,
+    rowState: CrackStatus = CrackStatus.NONE,
 ) {
     // Parse the hash once per row (not every recomposition) — it splits + hex-decodes twice.
     val onPhoneCrackable = remember(c.hash22000) { WpaCracker.isOnPhoneCrackable(c.hash22000) }
@@ -860,29 +812,29 @@ private fun CaptureDetailRow(
                 color = Color(0xFF3DFF6E), fontWeight = FontWeight.Bold, fontSize = 10.sp,
                 fontFamily = TerminalMono, modifier = Modifier.padding(end = 8.dp)
             )
-            rowState == RowCrack.RUNNING -> Text(
+            rowState == CrackStatus.RUNNING -> Text(
                 "cracking…",
                 color = primary, fontWeight = FontWeight.Bold, fontSize = 10.sp,
                 fontFamily = TerminalMono, modifier = Modifier.padding(end = 8.dp)
             )
-            rowState == RowCrack.PAUSED -> Text(
+            rowState == CrackStatus.PAUSED -> Text(
                 "paused",
                 color = Color(0xFFFFA533), fontSize = 10.sp,
                 fontFamily = TerminalMono, modifier = Modifier.padding(end = 8.dp)
             )
-            rowState == RowCrack.EXHAUSTED -> Text(
+            rowState == CrackStatus.EXHAUSTED -> Text(
                 // Whole wordlist searched on-phone, no hit — a lasting result, not re-offered.
                 "no match",
                 color = dim, fontSize = 10.sp,
                 fontFamily = TerminalMono, modifier = Modifier.padding(end = 8.dp)
             )
-            rowState == RowCrack.QUEUED -> Text(
+            rowState == CrackStatus.QUEUED -> Text(
                 // Tap to remove from the queue.
                 "queued ✕",
                 color = Color(0xFFFFA533), fontSize = 10.sp,
                 fontFamily = TerminalMono, modifier = Modifier.padding(end = 8.dp)
             )
-            rowState == RowCrack.ATTEMPTED -> Text(
+            rowState == CrackStatus.ATTEMPTED -> Text(
                 // Started before but not finished (stopped/interrupted) — still crackable; tap to resume.
                 "tried ▸",
                 color = Color(0xFFFFA533).copy(alpha = 0.85f), fontSize = 10.sp,
@@ -1094,407 +1046,6 @@ private fun etaLocal(tried: Long, total: Long, perSec: Long): String {
     }
 }
 
-/**
- * Real-basemap pixel map: fetches OSM tiles for the capture bounding box, recolors them
- * to the phosphor palette as chunky nearest-neighbour pixels, and overlays each catch
- * (bright) plus your current position (cyan '@'-equivalent). Falls back to the offline
- * [AsciiHeatmap] when there's no network / tiles unavailable, so it always shows *some*
- * map. Loading + recolor run off the main thread.
- */
-/** Map dispatcher: the smooth slippy renderer (continuous GPU zoom + pixel shader) on API 33+,
- *  else the coarse-grid fallback for older devices. */
-@Composable
-private fun CaptureMap(
-    points: List<CaptureEntry>,
-    current: GpsData?,
-    onCatch: (List<CaptureEntry>) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
-        SlippyPixelMap(points, current, onCatch, modifier)
-    else
-        PixelBasemap(points, current, onCatch, modifier)
-}
-
-/** Pinch past this scale (and settle) triggers a deeper-detail tile re-fetch of the viewport.
- *  Gated behind an actual pinch gesture ([userZoomed]) so the map's initial auto-zoom never fires it. */
-private const val DEEP_ZOOM_TRIGGER = 2.5f
-
-@Composable
-private fun PixelBasemap(
-    points: List<CaptureEntry>,
-    current: GpsData?,
-    onCatch: (List<CaptureEntry>) -> Unit = {},   // all captures in the tapped cell
-    modifier: Modifier = Modifier,
-) {
-    val context = LocalContext.current
-    val dim = MaterialTheme.colorScheme.onSurfaceVariant
-    val geo = remember(points) { points.filter { it.latitude != null && it.longitude != null } }
-    val hasFix = current?.isValid() == true
-    // Key the map state on ROUNDED geo bounds (+ a coarse fix cell), NOT the exact capture list — so
-    // live capture churn and GPS jitter don't reload the map and throw away the user's zoom.
-    val geoKey = if (geo.isEmpty()) "empty" else buildString {
-        append((geo.minOf { it.latitude!! } * 1000).toInt()); append(',')
-        append((geo.maxOf { it.latitude!! } * 1000).toInt()); append(',')
-        append((geo.minOf { it.longitude!! } * 1000).toInt()); append(',')
-        append((geo.maxOf { it.longitude!! } * 1000).toInt())
-        if (hasFix && current != null) {
-            append('|'); append((current.latitude * 100).toInt()); append(','); append((current.longitude * 100).toInt())
-        }
-    }
-
-    var grid by remember(geoKey) { mutableStateOf<MapGrid?>(null) }
-    var mapTiles by remember(geoKey) { mutableStateOf<MapTiles?>(null) }
-    var failed by remember(geoKey) { mutableStateOf(false) }
-    // Deeper-zoom-via-refetch state: keep the full-spread "home" map so a zoomed-in view can revert.
-    // `zoomed` = showing a re-fetched finer viewport; `loadingDetail` gates the "loading detail…" hint.
-    var homeTiles by remember(geoKey) { mutableStateOf<MapTiles?>(null) }
-    var homeGrid by remember(geoKey) { mutableStateOf<MapGrid?>(null) }
-    var zoomed by remember(geoKey) { mutableStateOf(false) }
-    var loadingDetail by remember(geoKey) { mutableStateOf(false) }
-    // True once the user actually pinches (so the deeper-zoom re-fetch can't misfire on the initial
-    // auto-zoom when the map opens centred on "you"). Reset after a deepen / reset-to-home.
-    var userZoomed by remember(geoKey) { mutableStateOf(false) }
-
-    LaunchedEffect(geoKey) {
-        grid = null; mapTiles = null; failed = false
-        homeTiles = null; homeGrid = null; zoomed = false; loadingDetail = false
-        if (geo.isEmpty()) { failed = true; return@LaunchedEffect }
-        val pts = geo.map { GeoPoint(it.latitude!!, it.longitude!!) } +
-            (current?.takeIf { it.isValid() }?.let { listOf(GeoPoint(it.latitude, it.longitude)) } ?: emptyList())
-        val tiles = TileMapLoader.load(context, pts)
-        if (tiles == null) { failed = true; return@LaunchedEffect }
-        val built = withContext(Dispatchers.Default) { buildMapGrid(tiles, geo) }
-        mapTiles = tiles; grid = built
-        homeTiles = tiles; homeGrid = built   // remember the full spread as "home"
-    }
-
-    val g = grid
-    when {
-        g != null -> {
-            // Precompute the "you" cell from the live fix (null if no fix / off-map).
-            val youCell: Int? = run {
-                val t = mapTiles ?: return@run null
-                val cur = current ?: return@run null
-                if (!cur.isValid()) return@run null
-                val (px, py) = t.project(cur.latitude, cur.longitude)
-                val c = (px / t.bitmap.width * g.cols).toInt()
-                val r = (py / t.bitmap.height * g.rows).toInt()
-                if (c in 0 until g.cols && r in 0 until g.rows) r * g.cols + c else null
-            }
-            Column(modifier = modifier) {
-                // Pan + pinch-zoom state. Reset whenever the point set changes.
-                var scale by remember(geoKey) { mutableStateOf(if (youCell != null) 3f else 1f) }
-                var offset by remember(geoKey) { mutableStateOf(Offset.Zero) }
-                var inited by remember(geoKey) { mutableStateOf(false) }
-
-                // Cap the map height so a tall capture area can't push the list off-screen;
-                // BoxWithConstraints gives us the pixel size for gesture clamping + centring.
-                BoxWithConstraints(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(1f)   // square map — matches the square tile composite
-                ) {
-                    val wPx = constraints.maxWidth.toFloat()
-                    val hPx = constraints.maxHeight.toFloat()
-                    // Fit-cell: integer size so squares + gaps stay pixel-perfect at scale 1.
-                    val cw0 = floor(min(wPx / g.cols, hPx / g.rows)).coerceAtLeast(1f)
-
-                    // Keep the content overlapping the viewport (can't drag it into the void).
-                    fun clampOffset(o: Offset, s: Float): Offset {
-                        val cW = cw0 * s * g.cols; val cH = cw0 * s * g.rows
-                        val maxX = ((cW - wPx) / 2f).coerceAtLeast(0f)
-                        val maxY = ((cH - hPx) / 2f).coerceAtLeast(0f)
-                        return Offset(o.x.coerceIn(-maxX, maxX), o.y.coerceIn(-maxY, maxY))
-                    }
-
-                    // Deeper zoom: when the user pinches past the threshold (and settles), re-fetch
-                    // tiles for the visible viewport and rebuild the SAME coarse grid over them — so
-                    // pixels stay the same size + crisp while streets get finer (detail comes from
-                    // tighter geographic bounds, never from up-sampling the old composite). One level
-                    // deep; double-tap returns to the full spread.
-                    LaunchedEffect(homeGrid, wPx, hPx) {
-                        snapshotFlow { scale }.collectLatest { s ->
-                            // Each settled pinch past the threshold deepens one more level (not a
-                            // one-shot): z11 → z13 → … up to max tile detail. `zoomed` isn't gated
-                            // here so it can keep going deeper; double-tap returns to the full spread.
-                            if (loadingDetail || !userZoomed || s < DEEP_ZOOM_TRIGGER) return@collectLatest
-                            delay(260)   // settle: collectLatest cancels this if the pinch continues
-                            val gg = grid ?: return@collectLatest
-                            val tt = mapTiles ?: return@collectLatest
-                            if (tt.zoom >= 19) return@collectLatest   // already at max tile detail
-                            val cwLocal = floor(min(wPx / gg.cols, hPx / gg.rows)).coerceAtLeast(1f) * scale
-                            val ox = (wPx - cwLocal * gg.cols) / 2f + offset.x
-                            val oy = (hPx - cwLocal * gg.rows) / 2f + offset.y
-                            val colL = ((0f - ox) / cwLocal).coerceIn(0f, gg.cols.toFloat())
-                            val colR = ((wPx - ox) / cwLocal).coerceIn(0f, gg.cols.toFloat())
-                            val rowT = ((0f - oy) / cwLocal).coerceIn(0f, gg.rows.toFloat())
-                            val rowB = ((hPx - oy) / cwLocal).coerceIn(0f, gg.rows.toFloat())
-                            val bmpW = tt.bitmap.width.toFloat(); val bmpH = tt.bitmap.height.toFloat()
-                            val c1 = tt.unproject(colL / gg.cols * bmpW, rowT / gg.rows * bmpH)
-                            val c2 = tt.unproject(colR / gg.cols * bmpW, rowB / gg.rows * bmpH)
-                            loadingDetail = true
-                            val finer = TileMapLoader.load(context, listOf(c1, c2))
-                            if (finer != null) {
-                                val finerGrid = withContext(Dispatchers.Default) { buildMapGrid(finer, geo) }
-                                mapTiles = finer; grid = finerGrid; zoomed = true
-                                scale = 1f; offset = Offset.Zero; userZoomed = false
-                            }
-                            loadingDetail = false
-                        }
-                    }
-
-                    // Start centred on the live "you" fix (zoomed in), so the map opens on
-                    // where you actually are rather than the whole spread.
-                    LaunchedEffect(g, youCell, wPx, hPx) {
-                        if (!inited && wPx > 0f) {
-                            inited = true
-                            if (youCell != null && scale > 1f) {
-                                val cw = cw0 * scale
-                                val uc = youCell % g.cols; val ur = youCell / g.cols
-                                offset = clampOffset(
-                                    Offset(cw * g.cols / 2f - (uc + 0.5f) * cw,
-                                           cw * g.rows / 2f - (ur + 0.5f) * cw),
-                                    scale,
-                                )
-                            }
-                        }
-                    }
-
-                    Canvas(
-                        modifier = Modifier
-                            .matchParentSize()
-                            .clipToBounds()
-                            // Pinch to zoom, drag to pan. Squares stay crisp at any zoom
-                            // because the Canvas re-draws rects at the scaled cell size —
-                            // no bitmap resampling, so the pixel look is preserved.
-                            .pointerInput(g) {
-                                detectTransformGestures { centroid, pan, zoom, _ ->
-                                    if (zoom != 1f) userZoomed = true   // a real pinch (not just a pan)
-                                    val s0 = scale
-                                    val s1 = (s0 * zoom).coerceIn(1f, 10f)
-                                    // Zoom toward the pinch focal point (centroid), not the map centre,
-                                    // so the map zooms where your fingers are — otherwise the deeper
-                                    // re-fetch grabs the wrong area. Keep the content under `centroid`
-                                    // fixed as scale goes s0 → s1.
-                                    val ox0 = (wPx - cw0 * s0 * g.cols) / 2f + offset.x
-                                    val oy0 = (hPx - cw0 * s0 * g.rows) / 2f + offset.y
-                                    val colF = (centroid.x - ox0) / (cw0 * s0)
-                                    val rowF = (centroid.y - oy0) / (cw0 * s0)
-                                    val offX = (centroid.x - colF * cw0 * s1) - (wPx - cw0 * s1 * g.cols) / 2f
-                                    val offY = (centroid.y - rowF * cw0 * s1) - (hPx - cw0 * s1 * g.rows) / 2f
-                                    scale = s1
-                                    offset = clampOffset(Offset(offX + pan.x, offY + pan.y), s1)
-                                }
-                            }
-                            // Single-tap → open the nearest catch's detail; double-tap → reset view.
-                            .pointerInput(g) {
-                                detectTapGestures(
-                                    onDoubleTap = {
-                                        // Back to the full spread if we'd zoomed into a finer viewport.
-                                        if (zoomed) { mapTiles = homeTiles; grid = homeGrid; zoomed = false }
-                                        scale = 1f; offset = Offset.Zero; userZoomed = false
-                                    },
-                                    onTap = { pos ->
-                                        // Invert the same transform the draw pass uses, find the closest
-                                        // catch cell, and hand back all captures in it (the caller opens
-                                        // one directly or shows a picker when the cell holds several).
-                                        val cwt0 = floor(min(size.width.toFloat() / g.cols, size.height.toFloat() / g.rows)).coerceAtLeast(1f)
-                                        val cwt = cwt0 * scale
-                                        val oxt = (size.width - cwt * g.cols) / 2f + offset.x
-                                        val oyt = (size.height - cwt * g.rows) / 2f + offset.y
-                                        var bestCell = -1
-                                        var bestD = Float.MAX_VALUE
-                                        for (cell in g.catchByCell.keys) {
-                                            val cx = oxt + (cell % g.cols + 0.5f) * cwt
-                                            val cy = oyt + (cell / g.cols + 0.5f) * cwt
-                                            val d = hypot(pos.x - cx, pos.y - cy)
-                                            if (d < bestD) { bestD = d; bestCell = cell }
-                                        }
-                                        if (bestCell >= 0 && bestD <= maxOf(cwt * 1.5f, 48f)) {
-                                            g.catchByCell[bestCell]?.let { onCatch(it) }
-                                        }
-                                    },
-                                )
-                            }
-                    ) {
-                        drawRect(Color(0xFF02060A), size = size)     // console ink background
-                        val cw = cw0 * scale
-                        val ox = (size.width - cw * g.cols) / 2f + offset.x
-                        val oy = (size.height - cw * g.rows) / 2f + offset.y
-                        val gap = (cw * 0.14f).coerceIn(1f, 6f)      // gap scales with zoom
-                        val sq = (cw - gap).coerceAtLeast(1f)
-                        // Basemap: grey squares (gapped).
-                        for (r in 0 until g.rows) {
-                            for (c in 0 until g.cols) {
-                                val v = g.grey[r * g.cols + c]
-                                if (v < 0) continue
-                                drawRect(Color(v, v, v), topLeft = Offset(ox + c * cw, oy + r * cw), size = Size(sq, sq))
-                            }
-                        }
-                        // Catches: bright green, same gapped square size as the basemap so the
-                        // markers sit ON the grid instead of overflowing it (was drawn at full
-                        // cell width `cw`, which made them larger than the map pixels).
-                        val green = Color(0x3D, 0xFF, 0x6E)
-                        for (i in g.catchCells) {
-                            val c = i % g.cols; val r = i / g.cols
-                            drawRect(green, topLeft = Offset(ox + c * cw, oy + r * cw), size = Size(sq, sq))
-                        }
-                        // You: orange — a warm colour clearly distinct from the green catches.
-                        youCell?.let { i ->
-                            val c = i % g.cols; val r = i / g.cols
-                            drawRect(Color(0xFF, 0xA5, 0x33), topLeft = Offset(ox + c * cw, oy + r * cw), size = Size(sq, sq))
-                        }
-                    }
-                }
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    if (loadingDetail) "loading detail…"
-                    else "tap a catch to open · pinch to zoom · drag to pan · double-tap to reset",
-                    color = dim.copy(alpha = 0.6f), fontSize = 9.sp, fontFamily = TerminalMono
-                )
-            }
-        }
-        // No network / no tiles → the original ASCII heatmap so there's always a map.
-        failed -> AsciiHeatmap(points, current, modifier)
-        else -> Text("  rendering map…", color = dim, fontSize = 11.sp, fontFamily = TerminalMono, modifier = modifier)
-    }
-}
-
-/** A coarse grid extracted from the OSM tiles: per-cell grey value + catch cells. */
-private class MapGrid(
-    val cols: Int,
-    val rows: Int,
-    val grey: IntArray,          // per cell (row*cols+col): -1 = empty, else grey 0..255
-    val catchCells: List<Int>,
-    val catchByCell: Map<Int, List<CaptureEntry>>,   // cell → all captures there (tap-to-open)
-)
-
-/**
- * Downsample the OSM composite to a coarse grid and auto-contrast it into per-cell grey
- * values (the street network), plus the grid cells where catches land. The current
- * position is drawn as a live overlay by the renderer, not baked in here. The Canvas
- * renderer draws this at integer cell sizes for a pixel-perfect grid.
- */
-private fun buildMapGrid(tiles: MapTiles, geo: List<CaptureEntry>): MapGrid {
-    val src = tiles.bitmap
-    val cols = 120
-    val rows = (cols.toDouble() * src.height / src.width).roundToInt().coerceIn(30, 220)
-    val small = android.graphics.Bitmap.createScaledBitmap(src, cols, rows, true)
-
-    // Measure luminance per cell, then auto-contrast: background level (~60th percentile,
-    // since most of a map is background) → 0, bright tail (98th) → 1. Adapts to dark-rural
-    // or bright-urban tiles so roads always show.
-    val lum = DoubleArray(cols * rows)
-    for (yy in 0 until rows) {
-        for (xx in 0 until cols) {
-            val p = small.getPixel(xx, yy)
-            lum[yy * cols + xx] = (0.299 * ((p shr 16) and 0xFF) +
-                0.587 * ((p shr 8) and 0xFF) + 0.114 * (p and 0xFF)) / 255.0
-        }
-    }
-    val sorted = lum.sorted()
-    val lo = sorted[(sorted.size * 0.60).toInt().coerceIn(0, sorted.size - 1)]
-    val hi = sorted[(sorted.size * 0.98).toInt().coerceIn(0, sorted.size - 1)].coerceAtLeast(lo + 0.02)
-
-    val grey = IntArray(cols * rows) { -1 }
-    for (i in lum.indices) {
-        val t = ((lum[i] - lo) / (hi - lo)).coerceIn(0.0, 1.0)
-        if (t > 0.12) grey[i] = (50 + t * 120).toInt().coerceIn(0, 255)
-    }
-
-    fun cellIndex(lat: Double, lon: Double): Int? {
-        val (px, py) = tiles.project(lat, lon)
-        val c = (px / src.width * cols).toInt()
-        val r = (py / src.height * rows).toInt()
-        if (c < 0 || r < 0 || c >= cols || r >= rows) return null
-        return r * cols + c
-    }
-    val catchCells = geo.mapNotNull { cellIndex(it.latitude!!, it.longitude!!) }
-    // cell → all captures there (a coarse cell can hold several), for tap-to-open / cluster picker.
-    val catchByCell = HashMap<Int, MutableList<CaptureEntry>>()
-    geo.forEach { c ->
-        cellIndex(c.latitude!!, c.longitude!!)?.let { catchByCell.getOrPut(it) { mutableListOf() }.add(c) }
-    }
-
-    small.recycle()
-    return MapGrid(cols, rows, grey, catchCells, catchByCell)
-}
-
-/**
- * ASCII block-char heatmap: projects geolocated captures onto a coarse grid and draws
- * each cell as a block glyph (· ░ ▒ ▓ █) whose weight = how many catches landed there.
- * Pure terminal — no basemap, no dependency. '@' marks your current position. Kept as
- * the offline fallback for [PixelBasemap].
- */
-@Composable
-private fun AsciiHeatmap(points: List<CaptureEntry>, current: GpsData?, modifier: Modifier = Modifier) {
-    val primary = MaterialTheme.colorScheme.primary
-    val markerColor = Color(0xFF6FE8FF)   // cyan "you are here"
-
-    val cols = 32
-    val rows = 16
-
-    val geo = points.filter { it.latitude != null && it.longitude != null }
-    if (geo.isEmpty()) return
-
-    // Fit bounds to the CAPTURES so they spread across the grid. The current position
-    // is often far away; including it would squash all captures into one cell — instead
-    // cell() clamps "@" to the nearest edge (see coerceIn below).
-    val lats = geo.map { it.latitude!! }
-    val lons = geo.map { it.longitude!! }
-    val minLat = lats.min(); val maxLat = lats.max()
-    val minLon = lons.min(); val maxLon = lons.max()
-    val midLat = (minLat + maxLat) / 2.0
-    val cosLat = cos(midLat * PI / 180.0).coerceAtLeast(0.01)
-    val latRange = (maxLat - minLat).takeIf { it > 0 } ?: 1e-4
-    val lonRange = ((maxLon - minLon) * cosLat).takeIf { it > 0 } ?: 1e-4
-
-    fun cell(lat: Double, lon: Double): Pair<Int, Int> {
-        val nx = ((lon - minLon) * cosLat / lonRange).coerceIn(0.0, 1.0)
-        val ny = ((lat - minLat) / latRange).coerceIn(0.0, 1.0)
-        val col = (nx * (cols - 1)).roundToInt()
-        val row = ((1.0 - ny) * (rows - 1)).roundToInt()   // north at top
-        return col to row
-    }
-
-    val grid = Array(rows) { IntArray(cols) }
-    geo.forEach { val (col, row) = cell(it.latitude!!, it.longitude!!); grid[row][col]++ }
-    val maxCount = grid.maxOf { r -> r.maxOrNull() ?: 0 }.coerceAtLeast(1)
-    val here = current?.let { cell(it.latitude, it.longitude) }
-
-    val text = buildAnnotatedString {
-        for (r in 0 until rows) {
-            for (c in 0 until cols) {
-                if (here != null && here.first == c && here.second == r) {
-                    withStyle(SpanStyle(color = markerColor)) { append('@') }
-                } else {
-                    val n = grid[r][c]
-                    if (n == 0) {
-                        withStyle(SpanStyle(color = primary.copy(alpha = 0.14f))) { append('·') }
-                    } else {
-                        val ch = when {
-                            n >= maxCount * 0.75 -> '█'
-                            n >= maxCount * 0.50 -> '▓'
-                            n >= maxCount * 0.25 -> '▒'
-                            else                 -> '░'
-                        }
-                        withStyle(SpanStyle(color = primary)) { append(ch) }
-                    }
-                }
-            }
-            if (r < rows - 1) append('\n')
-        }
-    }
-
-    Text(
-        text = text,
-        fontFamily = TerminalMono,
-        fontSize = 12.sp,
-        lineHeight = 13.sp,
-        modifier = modifier
-    )
-}
 
 // ── small local helpers (kept private to this screen) ───────────────────────
 

@@ -151,6 +151,9 @@ fun MainContentArea(
     val pwnagotchiVM = androidx.lifecycle.viewmodel.compose.viewModel<PwnagotchiViewModel>(
         factory = PwnagotchiViewModelFactory(context.applicationContext as Application)
     )
+    // The "which device signals drive the pet's mood" rules live in this bridge, not inline here.
+    // The effects below just forward state changes to it.
+    val moodBridge = remember(pwnagotchiVM) { com.wsvdmeer.pwncompanion.ai.DeviceMoodBridge(pwnagotchiVM) }
 
     // Live terminal event feed
     val eventLog by mainViewModel.eventLog.collectAsState()
@@ -177,66 +180,24 @@ fun MainContentArea(
     val linkStalledSecs by mainViewModel.linkStalledSecs.collectAsState()
     // Newer app version on GitHub (or null) — surfaced as a single line on the version row.
     val updateVersion by mainViewModel.updateVersion.collectAsState()
-    LaunchedEffect(isAutoMode) {
-        pwnagotchiVM.setAutoMode(isAutoMode)
-    }
+    LaunchedEffect(isAutoMode) { moodBridge.onAutoMode(isAutoMode) }
 
     // ── Wire network events from Pwnagotchi → AI personality ─────────────────
     val lastNetworkEvent by mainViewModel.lastNetworkEvent.collectAsState()
-    LaunchedEffect(lastNetworkEvent) {
-        val event = lastNetworkEvent ?: return@LaunchedEffect
-        // Normalise event_type: plugin sends snake_case ("idle", "handshakes_captured"),
-        // but WifiEvent.type is expected in UPPER_SNAKE. Map idle only in AUTO mode.
-        val eventType = event.eventType.uppercase()
-        if (eventType == "IDLE" && !isAutoMode) return@LaunchedEffect  // skip idle in manual
-        pwnagotchiVM.generatePersonality(
-            com.wsvdmeer.pwncompanion.ai.WifiEvent(
-                description  = event.description,
-                type         = eventType,
-                network      = event.network,
-                count        = event.count,
-                rssi         = event.signal,
-                channel      = event.channel,
-                security     = event.security,
-                timestamp    = event.timestamp
-            )
-        )
-        // Update capture count so the AI knows the running total
-        if (event.totalCaptures > 0) {
-            pwnagotchiVM.recordCapture(event.totalCaptures)
-        }
-    }
+    LaunchedEffect(lastNetworkEvent) { moodBridge.onNetworkEvent(lastNetworkEvent, isAutoMode) }
 
     // ── Sync pwnagotchi device mood → app personality mood ───────────────────
     val deviceMood by mainViewModel.deviceMood.collectAsState()
-    LaunchedEffect(deviceMood) {
-        val mood = deviceMood ?: return@LaunchedEffect
-        pwnagotchiVM.applyDeviceMood(mood)
-    }
-
+    LaunchedEffect(deviceMood) { moodBridge.onDeviceMood(deviceMood) }
 
     // ── Push learning stats into the voice engine so its lines can reference channel intel ─
-    LaunchedEffect(learningStats) {
-        pwnagotchiVM.updateLearningStats(learningStats)
-    }
+    LaunchedEffect(learningStats) { moodBridge.onLearningStats(learningStats) }
 
     // ── Feed device telemetry → emergent personality ─────────────────────────
-    // reward = the device's own self-score; the *_for_epochs counters are its mood
-    // over time; temp/cpu = a "running hot / overworked" stress signal.
-    LaunchedEffect(telemetry) {
-        telemetry?.let { pwnagotchiVM.applyTelemetry(it) }
-    }
+    LaunchedEffect(telemetry) { moodBridge.onTelemetry(telemetry) }
 
     // ── Sync the pet's real catch count + last-catch from the device's capture history ──
-    // Fixes the creature panel showing "0 caught · hungry" despite a full capture log —
-    // "caught" previously read only this session's live events. Timestamps are unix seconds.
-    LaunchedEffect(captures) {
-        val newestSec = captures.mapNotNull { it.timestamp }.maxOrNull()
-        pwnagotchiVM.syncCaptureHistory(
-            total = captures.size,
-            lastCaptureMs = newestSec?.let { it * 1000L },
-        )
-    }
+    LaunchedEffect(captures) { moodBridge.onCaptures(captures) }
 
     // ── Sync Pwnagotchi device name → AI companion name ──────────────────────
     // pwnagotchiName comes from the plugin's status message (device_name field).
@@ -246,9 +207,7 @@ fun MainContentArea(
             ?.pwnagotchiName?.takeIf(String::isNotBlank)
             ?: "Pwnagotchi"
     }
-    LaunchedEffect(pwnagotchiName) {
-        pwnagotchiVM.updatePwnagotchiName(pwnagotchiName)
-    }
+    LaunchedEffect(pwnagotchiName) { moodBridge.onPwnagotchiName(pwnagotchiName) }
 
 
     val device = connectedDevices.firstOrNull()
@@ -381,9 +340,7 @@ fun MainContentArea(
     // Only generate voice-pool lines while a device is linked (saves battery), and
     // push the pool down whenever it changes or a device (re)connects so the plugin
     // can speak our fresh lines in the device's own speech bubble.
-    LaunchedEffect(connectedDevices) {
-        pwnagotchiVM.setDeviceConnected(connectedDevices.isNotEmpty())
-    }
+    LaunchedEffect(connectedDevices) { moodBridge.onDeviceConnected(connectedDevices.isNotEmpty()) }
     val voicePool by pwnagotchiVM.voicePool.collectAsState()
     LaunchedEffect(voicePool, connectedDevices) {
         if (connectedDevices.isNotEmpty() && voicePool.isNotEmpty()) {
