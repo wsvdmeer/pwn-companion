@@ -12,8 +12,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
-import com.wsvdmeer.pwncompanion.protocol.MessageHandler
-import com.wsvdmeer.pwncompanion.protocol.OutgoingMessageQueue
 import com.wsvdmeer.pwncompanion.presentation.ui.MainScreen
 import com.wsvdmeer.pwncompanion.presentation.theme.PwnCompanionTheme
 import com.wsvdmeer.pwncompanion.services.CompanionBackgroundService
@@ -42,8 +40,6 @@ class MainActivity : ComponentActivity() {
 
     // Service references
     private var networkService: NetworkService? = null
-    private var messageHandler: MessageHandler? = null
-    private var outgoingQueue: OutgoingMessageQueue? = null
 
     private var serviceIntentStarted = false
 
@@ -175,16 +171,13 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         Log.i(tag, "MainActivity destroyed")
 
-        // Do NOT clean up the MessageHandler / OutgoingMessageQueue here. They belong to
-        // the NetworkService SINGLETON (shared with CompanionBackgroundService), and their
-        // cleanup() cancels internal coroutine scopes that are never recreated. On a mere
-        // config change (rotation) or Activity teardown while the service keeps running,
-        // that would permanently silence the device's image/GPS/event feed until the whole
-        // process restarts. Just drop our references and let the singleton/service own the
+        // Do NOT clean up the NetworkService here. It's a SINGLETON (shared with
+        // CompanionBackgroundService), and its cleanup() cancels internal coroutine scopes that are
+        // never recreated. On a mere config change (rotation) or Activity teardown while the service
+        // keeps running, that would permanently silence the device's image/GPS/event feed until the
+        // whole process restarts. Just drop our reference and let the singleton/service own the
         // lifecycle; the service persists until explicitly stopped or the device powers off.
         networkService = null
-        messageHandler = null
-        outgoingQueue = null
     }
 
     /**
@@ -222,10 +215,10 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Initialize ViewModel with service instances.
-     * Retrieves NetworkService singleton (and its contained MessageHandler/OutgoingQueue)
-     * and passes them to ViewModel for UI binding.
-     * 
+     * Initialize the ViewModel with the NetworkService singleton. The ViewModel reads the inbound
+     * event stream and outbound command channel off the orchestrator itself — the Activity no
+     * longer reaches in for MessageHandler / OutgoingMessageQueue.
+     *
      * IMPORTANT: Uses NetworkServiceSingleton to ensure we get the SAME instance
      * that CompanionBackgroundService is using. This is critical for message flow.
      */
@@ -233,18 +226,7 @@ class MainActivity : ComponentActivity() {
         try {
             // Get singleton instance of NetworkService (shared with CompanionBackgroundService)
             networkService = NetworkServiceSingleton.getInstance(applicationContext)
-            
-            // Get protocol handlers from NetworkService
-            messageHandler = networkService!!.getMessageHandler()
-            outgoingQueue = networkService!!.getOutgoingMessageQueue()
-
-            // Initialize ViewModel with services
-            viewModel.initializeServices(
-                networkService = networkService!!,
-                messageHandler = messageHandler!!,
-                outgoingQueue = outgoingQueue!!
-            )
-            
+            viewModel.initializeServices(networkService!!)
             Log.i(tag, "ViewModel initialized with singleton NetworkService instance")
         } catch (e: Exception) {
             Log.e(tag, "Error initializing ViewModel: ${e.message}", e)

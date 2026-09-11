@@ -9,7 +9,6 @@ import androidx.core.content.PermissionChecker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.wsvdmeer.pwncompanion.models.LocationData
-import com.wsvdmeer.pwncompanion.models.ScreenData
 import com.wsvdmeer.pwncompanion.services.NetworkServiceSingleton
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
@@ -83,36 +82,10 @@ class GpsWorker(
             Log.d(tag, "NetworkService not running, skipping periodic GPS broadcast")
             return
         }
-        val deviceStates = networkService.getDeviceStates()
-        if (deviceStates.isNullOrEmpty()) {
-            Log.d(tag, "No connected devices, skipping periodic GPS broadcast")
-            return
-        }
-        val outgoingQueue = networkService.getOutgoingMessageQueue()
-        for ((deviceId, _) in deviceStates) {
-            try {
-                outgoingQueue?.queueLocationResponse(
-                    deviceId = deviceId,
-                    latitude = location.latitude,
-                    longitude = location.longitude,
-                    accuracy = location.accuracy,
-                    altitude = location.altitude
-                )
-            } catch (e: Exception) {
-                Log.e(tag, "Error queueing periodic location for $deviceId: ${e.message}")
-            }
-        }
-        networkService.updateLastGpsData(
-            ScreenData(
-                type = ScreenData.TYPE_GPS,
-                latitude = location.latitude,
-                longitude = location.longitude,
-                accuracy = location.accuracy.toDouble(),
-                altitude = location.altitude,
-                timestamp = System.currentTimeMillis()
-            )
-        )
-        Log.i(tag, "Periodic GPS broadcast queued for ${deviceStates.size} device(s)")
+        // One cohesive op on the orchestrator: fan the fix out to every connected device + cache it.
+        val sent = networkService.broadcastLocation(location)
+        if (sent == 0) Log.d(tag, "No connected devices, skipping periodic GPS broadcast")
+        else Log.i(tag, "Periodic GPS broadcast queued for $sent device(s)")
     }
 
     /**
