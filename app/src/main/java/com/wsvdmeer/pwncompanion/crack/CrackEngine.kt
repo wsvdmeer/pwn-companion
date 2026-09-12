@@ -114,7 +114,27 @@ object CrackEngine {
     // Superseded once a network becomes cracked or exhausted.
     private val _attempted = MutableStateFlow<Set<String>>(emptySet())
     val attempted: StateFlow<Set<String>> = _attempted.asStateFlow()
-    @Volatile private var resultsLoaded = false
+
+    // All checkpoint + results persistence (and the supersede precedence) lives in CrackStore.
+    // Built lazily on first use because this object is created before any Context exists; it wraps
+    // the two SharedPreferences files and mutates the result flows above.
+    @Volatile private var storeRef: CrackStore? = null
+    private fun store(context: Context): CrackStore {
+        storeRef?.let { return it }
+        return synchronized(this) {
+            storeRef ?: CrackStore(
+                checkpoints = PrefsKeyValueStore(
+                    context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                ),
+                results = PrefsKeyValueStore(
+                    context.applicationContext.getSharedPreferences(RESULTS_PREFS, Context.MODE_PRIVATE)
+                ),
+                cracked = _cracked,
+                exhausted = _exhausted,
+                attempted = _attempted,
+            ).also { storeRef = it }
+        }
+    }
 
     /**
      * The one derived view the captures screen collects: state + queue + exhausted + attempted,
@@ -185,13 +205,7 @@ object CrackEngine {
 
     /** Forget a network's crack result + checkpoint, making it crackable again (e.g. for testing). */
     fun forget(context: Context, bssid: String) {
-        val key = norm(bssid)
-        _cracked.update { it - key }
-        _exhausted.update { it - key }
-        _attempted.update { it - key }
-        clearCheckpoint(context.applicationContext, key)
-        context.applicationContext.getSharedPreferences(RESULTS_PREFS, Context.MODE_PRIVATE)
-            .edit().remove(key).apply()
+        store(context).forget(norm(bssid))
     }
 
     private fun start(context: Context) {
@@ -267,7 +281,8 @@ object CrackEngine {
         if (pmkidH == null && eapolH == null) {
             _state.value = CrackState.Failed(bssid, ssid, "bad hash"); return true
         }
-        persistResultAttempted(context.applicationContext, key)   // flag "tried" from the first run
+        val store = store(context)
+        store.markAttempted(key)   // flag "tried" from the first run
         // Per-flavour verify + native-batch closures (chosen once, reused by every worker).
         val verifyOne: (String) -> Boolean =
             if (pmkidH != null) { c -> WpaCracker.verify(pmkidH, c) }
@@ -300,7 +315,7 @@ object CrackEngine {
         // mangle (which changes what each index means) invalidates a stale checkpoint instead of
         // resuming into the wrong candidate. One monotonic cursor → everything below is done.
         val wordlistId = CrackSpace.wordlistId(WordlistManager.identity(), mangle, mult, ispCount)
-        val startIndex = if (quick) 0L else loadCheckpoint(context, key, wordlistId).coerceIn(0L, limit)
+        val startIndex = if (quick) 0L else store.checkpoint(key, wordlistId).coerceIn(0L, limit)
         val cursor = AtomicLong(startIndex)
         val tried = AtomicLong(startIndex)
         val found = AtomicReference<String?>(null)
@@ -334,7 +349,7 @@ object CrackEngine {
                     val done = (n - startIndex).coerceAtLeast(0)
                     val ps = if (secs > 0.5) (done / secs).toLong() else 0L
                     _state.value = CrackState.Running(bssid, ssid, n, limit, ps, mode, phaseAt(n))
-                    if (!quick) saveCheckpoint(context, key, wordlistId, (cursor.get() - inflight).coerceAtLeast(0))
+                    if (!quick) store.saveCheckpoint(key, wordlistId, (cursor.get() - inflight).coerceAtLeast(0))
                     delay(400)
                 }
             }
@@ -375,42 +390,41 @@ object CrackEngine {
             }.forEach { it.join() }
             ticker.cancel()
         }
-        if (!quick) saveCheckpoint(context, key, wordlistId, (cursor.get() - inflight).coerceAtLeast(0))
-        val pw = found.get()
+        if (!quick) store.saveCheckpoint(key, wordlistId, (cursor.get() - inflight).coerceAtLeast(0))
         val queueLeft = _queue.value.size
-        return when {
-            pw != null -> {
-                clearCheckpoint(context, key)
-                _cracked.update { it + (key to pw) }
-                persistResultCracked(context, key, pw)   // survives app restart
+        // The branch choice is a pure function of the run's end state (tested in CrackOutcomeTest);
+        // this block only fires the matching side-effects + paces the next run.
+        val outcome = CrackOutcome.decide(found.get(), paused.get(), skip.get(), quick)
+        when (outcome) {
+            is CrackOutcome.Cracked -> {
+                val pw = outcome.password
+                store.clearCheckpoint(key)
+                store.markCracked(key, pw)   // updates flow + persists; survives app restart
                 _state.value = CrackState.Done(bssid, ssid, pw)
                 runCatching { NotificationHelper.notifyCracked(context, ssid, pw) }
                 Log.i(TAG, "on-phone crack SUCCESS: $ssid -> $pw")
                 if (queueLeft > 0) delay(1500)   // let the result show before the next one starts
-                true
             }
-            paused.get() -> false   // power policy paused us; retry the same network on resume
-            skip.get() -> {
+            CrackOutcome.Paused -> Unit   // power policy paused us; retry the same network on resume
+            CrackOutcome.Skipped -> {
                 _state.value = CrackState.Failed(bssid, ssid, "skipped")
                 if (queueLeft > 0) delay(600)
-                true
             }
-            quick -> {
+            CrackOutcome.QuickMiss -> {
                 // A quick miss only means "not in the top-$limit" — a full crack may still find it,
                 // so DON'T mark it exhausted; leave the row crackable.
                 _state.value = CrackState.Failed(bssid, ssid, "not in quick set ($limit)")
                 if (queueLeft > 0) delay(800)
-                true
             }
-            else -> {
+            CrackOutcome.Exhausted -> {
                 // Whole list searched, no hit — lasting "no match" so it isn't re-offered.
-                clearCheckpoint(context, key)
-                persistResultExhausted(context, key)
+                store.clearCheckpoint(key)
+                store.markExhausted(key)
                 _state.value = CrackState.Failed(bssid, ssid, "not in wordlist ($limit tried)")
                 if (queueLeft > 0) delay(1500)
-                true
             }
         }
+        return outcome.consumed
     }
 
     // ── Resume checkpoints ─────────────────────────────────────────────────────
@@ -419,76 +433,21 @@ object CrackEngine {
     // "<index>@<wordlistId>"; a checkpoint for a different wordlist is ignored.
     private const val PREFS = "crack_checkpoints"
 
-    private fun loadCheckpoint(context: Context, bssidKey: String, wordlistId: String): Long {
-        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(bssidKey, null)
-        return CrackCheckpoint.decode(raw, wordlistId)
-    }
-
-    private fun saveCheckpoint(context: Context, bssidKey: String, wordlistId: String, index: Long) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putString(bssidKey, CrackCheckpoint.encode(index, wordlistId)).apply()
-    }
-
-    private fun clearCheckpoint(context: Context, bssidKey: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(bssidKey).apply()
-    }
-
     // ── Persisted crack results ─────────────────────────────────────────────────
     // Outcomes survive app restart / process death so a finished crack keeps its status:
     // "c:<password>" for a hit (also re-overlaid onto captures), "x" for a fully-searched miss.
     private const val RESULTS_PREFS = "crack_results"
 
     /** Load persisted crack outcomes into memory (cracked passwords + "no match" set). Idempotent. */
-    fun loadResults(context: Context) {
-        if (resultsLoaded) return
-        resultsLoaded = true
-        runCatching {
-            val all = context.getSharedPreferences(RESULTS_PREFS, Context.MODE_PRIVATE).all
-            val crackedNow = HashMap<String, String>()
-            val exh = HashSet<String>()
-            val att = HashSet<String>()
-            for ((k, v) in all) {
-                when (val outcome = CrackResults.parse(v as? String)) {
-                    is CrackResults.Outcome.Cracked -> crackedNow[k] = outcome.password
-                    CrackResults.Outcome.Exhausted -> exh.add(k)
-                    CrackResults.Outcome.Attempted -> att.add(k)
-                    null -> {}
-                }
-            }
-            if (crackedNow.isNotEmpty()) _cracked.update { crackedNow + it }
-            if (exh.isNotEmpty()) _exhausted.value = exh
-            if (att.isNotEmpty()) _attempted.value = att
-        }
-    }
+    fun loadResults(context: Context) = store(context).loadResults()
 
-    private fun persistResultCracked(context: Context, bssidKey: String, password: String) {
-        context.getSharedPreferences(RESULTS_PREFS, Context.MODE_PRIVATE)
-            .edit().putString(bssidKey, CrackResults.cracked(password)).apply()
-        _attempted.update { it - bssidKey }   // cracked supersedes "tried"
-    }
-
-    private fun persistResultExhausted(context: Context, bssidKey: String) {
-        context.getSharedPreferences(RESULTS_PREFS, Context.MODE_PRIVATE)
-            .edit().putString(bssidKey, CrackResults.EXHAUSTED).apply()
-        _exhausted.update { it + bssidKey }
-        _attempted.update { it - bssidKey }   // "no match" supersedes "tried"
-    }
-
-    /** Mark a network as attempted (started at least once) unless it's already cracked/exhausted. */
-    private fun persistResultAttempted(context: Context, bssidKey: String) {
-        if (_exhausted.value.contains(bssidKey) || _cracked.value.containsKey(bssidKey)) return
-        context.getSharedPreferences(RESULTS_PREFS, Context.MODE_PRIVATE)
-            .edit().putString(bssidKey, CrackResults.ATTEMPTED).apply()
-        _attempted.update { it + bssidKey }
-    }
-
-    /** Worker count, honouring the gentle knobs: cap at 2 in easy-CPU mode, else half on battery
-     * and all-but-one while plugged in. */
-    private fun workerCores(context: Context): Int {
-        val cpus = Runtime.getRuntime().availableProcessors()
-        if (CrackSettings.gentleCpu.value) return 2.coerceIn(1, cpus)
-        return if (isPlugged(context)) (cpus - 1).coerceIn(1, 8) else (cpus / 2).coerceIn(1, 8)
-    }
+    /** Worker count for this run — see [PowerPolicy.workers]. */
+    private fun workerCores(context: Context): Int =
+        PowerPolicy.workers(
+            plugged = isPlugged(context),
+            gentleCpu = CrackSettings.gentleCpu.value,
+            cpus = Runtime.getRuntime().availableProcessors(),
+        )
 
     /**
      * "On a charger" = plugged in (AC/USB/wireless), NOT "battery actively charging". Many phones
@@ -506,16 +465,16 @@ object CrackEngine {
             .getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
     }.getOrDefault(100)
 
-    /** Why cracking is currently blocked by the power policy, or null if it may run. */
+    /** Why cracking is currently blocked by the power policy, or null if it may run — see [PowerPolicy]. */
     private fun blockReason(context: Context): String? {
         CrackSettings.ensureLoaded(context)
-        if (isPlugged(context)) return null   // on a charger → nothing to hold for
-        if (CrackSettings.chargerOnly.value) return "waiting for charger"
-        if (CrackSettings.lowBatteryStop.value) {
-            val level = batteryLevel(context)
-            if (level in 0..CrackSettings.LOW_PCT) return "battery $level% - paused"
-        }
-        return null
+        return PowerPolicy.blockReason(
+            plugged = isPlugged(context),
+            chargerOnly = CrackSettings.chargerOnly.value,
+            lowBatteryStop = CrackSettings.lowBatteryStop.value,
+            lowPct = CrackSettings.LOW_PCT,
+            batteryPct = { batteryLevel(context) },
+        )
     }
 
     private fun startService(context: Context) {
