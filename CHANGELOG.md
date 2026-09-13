@@ -4,6 +4,29 @@ All significant changes to PwnCompanion, most recent first.
 
 ---
 
+## Session — 2026-09-12 (architecture: deepen the cracking pipeline)
+
+App `1.2.9` (build 24)
+
+Internal refactor — behaviour-preserving. Carves three untested responsibilities out of the
+`CrackEngine` god-object into pure, named modules. The pipeline's pure helpers were already tested
+(`CrackSpace`/`CrackQueue`/`CrackCheckpoint`/`CrackResults`); the friction was that the *orchestration
+calling them* had no coverage. `CrackEngine` 539 → 498 lines; 19 new unit tests.
+
+### crack — extract the terminal decision, persistence, and power policy
+| Area | Detail |
+|------|--------|
+| `CrackOutcome` | The terminal `when` at the bottom of the 159-line `crackOne` (cracked / paused / skipped / quick-miss / exhausted) is now a pure `decide(found, paused, skipped, quick)` returning a sealed outcome; `crackOne` pattern-matches it to fire side-effects. The load-bearing "a quick-pass miss must NOT be marked exhausted" rule is now a test, not a comment |
+| `CrackStore` | The 8 scattered `SharedPreferences.edit()` sites (checkpoints + results) collapsed into one store behind a small `KeyValueStore` seam — `PrefsKeyValueStore` in production, an in-memory fake in tests. It owns both prefs files and the supersede precedence (cracked/exhausted both clear "attempted"; a cracked/exhausted network is never downgraded to "attempted") |
+| `PowerPolicy` | The "may we crack now, and with how many workers?" decision (`blockReason` + `workers`) is a pure function; `CrackEngine` keeps only the Android battery reads (`isPlugged`/`batteryLevel`). The load-bearing "plugged ≠ charging" subtlety and the worker-count clamps are now tested; the battery read stays lazy via a supplier |
+
+### Tests
+| Area | Detail |
+|------|--------|
+| New | `CrackOutcomeTest` (6), `CrackStoreTest` (6, via an in-memory `KeyValueStore` fake), `PowerPolicyTest` (7) |
+
+---
+
 ## Session — 2026-09-11 (architecture: deepen shallow modules)
 
 App `1.2.8` (build 23)
