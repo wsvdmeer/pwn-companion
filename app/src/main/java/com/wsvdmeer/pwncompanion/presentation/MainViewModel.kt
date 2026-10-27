@@ -1033,7 +1033,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val startIntent = Intent(getApplication(), CompanionBackgroundService::class.java).apply {
                 action = CompanionBackgroundService.ACTION_START_NETWORKING
             }
-            getApplication<Application>().startService(startIntent)
+            androidx.core.content.ContextCompat.startForegroundService(getApplication(), startIntent)
             // Immediate feedback: the WebSocket server can only bind over the Bluetooth
             // tether (bnep0), so if you're away from the pwnagotchi it can't come up yet —
             // it'll auto-bind the moment the link appears. Say so rather than no-op silently.

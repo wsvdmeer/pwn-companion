@@ -7,11 +7,14 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.ServiceCompat
+import com.wsvdmeer.pwncompanion.utils.BluetoothHelper
 import com.wsvdmeer.pwncompanion.utils.NotificationHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -25,6 +28,7 @@ class CompanionBackgroundService : Service() {
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private lateinit var networkService: NetworkService
     private val notificationId = 1000
+    private var tetherWaitJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -41,8 +45,9 @@ class CompanionBackgroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action ?: "START"
+        val fromBluetoothReceiver = intent?.getBooleanExtra(EXTRA_FROM_BLUETOOTH_RECEIVER, false) == true
         Log.i(tag, "═══════════════════════════════════════════")
-        Log.i(tag, "▶ onStartCommand: $action")
+        Log.i(tag, "▶ onStartCommand: $action (fromBluetoothReceiver=$fromBluetoothReceiver)")
         Log.i(tag, "═══════════════════════════════════════════")
 
         // Always call startForeground() immediately — Android requires it within 5 s of startForegroundService().
@@ -71,7 +76,14 @@ class CompanionBackgroundService : Service() {
 
         return when (action) {
             ACTION_START_NETWORKING -> {
-                Log.i(tag, "  └─ Starting network services (explicit user request)")
+                if (fromBluetoothReceiver) {
+                    Log.i(tag, "  └─ Starting network services (Bluetooth ACL trigger)")
+                    startTetherWaitWatchdog()
+                } else {
+                    Log.i(tag, "  └─ Starting network services (explicit user request)")
+                    tetherWaitJob?.cancel()
+                    tetherWaitJob = null
+                }
                 startNetworkServices()
                 // Start GPS now, while we're in the foreground (the app just launched / the
                 // user tapped start). A `location` foreground service can't be started from the
@@ -86,6 +98,8 @@ class CompanionBackgroundService : Service() {
             }
             ACTION_STOP_NETWORKING -> {
                 Log.i(tag, "  └─ Full stop requested by user")
+                tetherWaitJob?.cancel()
+                tetherWaitJob = null
                 fullStop()
                 START_NOT_STICKY   // Do NOT restart after explicit user stop
             }
@@ -98,9 +112,35 @@ class CompanionBackgroundService : Service() {
         }
     }
 
+    /**
+     * When started automatically by [com.wsvdmeer.pwncompanion.receivers.BluetoothConnectionReceiver],
+     * verify that a bt-pan/bnep0 tether interface actually comes up within [TETHER_WAIT_TIMEOUT_MS].
+     * If no PAN interface appears (e.g. a non-tethering Bluetooth connection), stop the service
+     * so the foreground notification does not remain stuck on "Starting WebSocket server…".
+     */
+    private fun startTetherWaitWatchdog() {
+        tetherWaitJob?.cancel()
+        tetherWaitJob = scope.launch {
+            val deadline = System.currentTimeMillis() + TETHER_WAIT_TIMEOUT_MS
+            while (System.currentTimeMillis() < deadline) {
+                if (BluetoothHelper.hasBluetoothTether() || networkService.isRunning()) {
+                    Log.d(tag, "bt-pan/bnep0 tether confirmed active after Bluetooth ACL trigger")
+                    return@launch
+                }
+                delay(1000)
+            }
+            if (!BluetoothHelper.hasBluetoothTether() && !networkService.isRunning()) {
+                Log.i(tag, "No bt-pan/bnep0 interface appeared within ${TETHER_WAIT_TIMEOUT_MS / 1000}s of Bluetooth ACL trigger - stopping service")
+                fullStop()
+            }
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         Log.i(tag, "CompanionBackgroundService destroyed")
+        tetherWaitJob?.cancel()
+        tetherWaitJob = null
 
         // Run cleanup on an INDEPENDENT scope, not `scope`. Both run on Main, so a
         // coroutine launched on `scope` here cannot start until onDestroy() returns —
@@ -110,6 +150,7 @@ class CompanionBackgroundService : Service() {
         // cancel and is GC'd once cleanup completes.
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                networkService.stopGpsTracking()
                 networkService.cleanup()
             } catch (e: Exception) {
                 Log.e(tag, "Error during cleanup: ${e.message}")
@@ -168,5 +209,7 @@ class CompanionBackgroundService : Service() {
     companion object {
         const val ACTION_START_NETWORKING = "com.wsvdmeer.pwncompanion.START_NETWORKING"
         const val ACTION_STOP_NETWORKING = "com.wsvdmeer.pwncompanion.STOP_NETWORKING"
+        const val EXTRA_FROM_BLUETOOTH_RECEIVER = "com.wsvdmeer.pwncompanion.EXTRA_FROM_BLUETOOTH_RECEIVER"
+        private const val TETHER_WAIT_TIMEOUT_MS = 60_000L
     }
 }

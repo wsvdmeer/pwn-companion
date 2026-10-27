@@ -224,6 +224,10 @@ class BluetoothTetherMonitor(
     fun unregister() {
         pollJob?.cancel()
         pollJob = null
+        debounceTimer?.cancel()
+        debounceTimer = null
+        bnep0Detected = false
+        btPanNetwork = null
         if (networkCallback != null) {
             connectivityManager.unregisterNetworkCallback(networkCallback!!)
             networkCallback = null

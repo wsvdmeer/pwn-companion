@@ -425,6 +425,7 @@ class NetworkService(private val context: Context) {
 
         scope.launch(Dispatchers.IO) {
             try {
+                udpAnnouncer.stop()
                 webSocketServer.stop()
                 Log.i(tag, "✓ WebSocket server stopped")
 
@@ -449,7 +450,7 @@ class NetworkService(private val context: Context) {
         scope.launch {
             stop()
             bluetoothMonitor.unregister()
-            outgoingMessageQueue.cleanup()
+            outgoingMessageQueue.clear()
         }
     }
 
@@ -533,17 +534,17 @@ class NetworkService(private val context: Context) {
             NotificationHelper.updateNetworkNotification(context, ip, webSocketServer.getConnectedClientCount())
 
             // Resume UDP announcements when last client disconnects so the Pwnagotchi can
-            // re-discover us.  Only restart if BT is still connected — if the client dropped
-            // because BT itself went away we must NOT restart the announcer, or it will spam
-            // ENETUNREACH until the service is eventually killed.
-            if (webSocketServer.getConnectedClientCount() == 0) {
+            // re-discover us. Only restart if the WebSocket server is still active and BT
+            // is still connected — if the client dropped because the service is stopping or
+            // BT itself went away we must NOT restart the announcer.
+            if (serverStarted && networkingDesired && webSocketServer.getConnectedClientCount() == 0) {
                 scope.launch {
                     try {
                         val bnep0Ip = bluetoothMonitor.getBnep0InterfaceIp()
-                        if (bnep0Ip != null) {
+                        if (serverStarted && networkingDesired && bnep0Ip != null) {
                             udpAnnouncer.start(bnep0Ip, 8081)
                         } else {
-                            Log.i(tag, "BT interface gone — skipping UDP announcer restart")
+                            Log.i(tag, "BT interface gone or server stopping - skipping UDP announcer restart")
                         }
                     } catch (e: Exception) {
                         Log.e(tag, "Error resuming UDP announcements: ${e.message}")

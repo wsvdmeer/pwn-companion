@@ -150,6 +150,13 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         Log.i(tag, "MainActivity started (visible)")
+        val net = networkService
+        if (net != null && !net.isRunning() &&
+            (net.networkingDesiredState.value || com.wsvdmeer.pwncompanion.utils.BluetoothHelper.hasBluetoothTether())) {
+            Log.i(tag, "MainActivity visible with service stopped - restarting CompanionBackgroundService")
+            serviceIntentStarted = false
+            startCompanionService()
+        }
     }
 
     override fun onResume() {
@@ -185,7 +192,7 @@ class MainActivity : ComponentActivity() {
      * Uses foreground service for Android 8.0+ (minimum SDK is 29).
      */
     private fun startCompanionService() {
-        if (serviceIntentStarted) {
+        if (serviceIntentStarted && networkService?.isRunning() == true) {
             Log.w(tag, "Service already started")
             return
         }
